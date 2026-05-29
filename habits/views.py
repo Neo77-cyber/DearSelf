@@ -61,7 +61,7 @@ def index(request):
         request,
         group="register_phone",
         key=lambda g, r: clean_number,
-        rate="5/h",
+        rate="10/h",
         method="POST",
         increment=True,
     ):
@@ -81,8 +81,6 @@ def index(request):
         messages.error(request, " ".join(exc.messages))
         return render(request, "habits/index.html")
 
-    email = request.POST.get("email", "").strip().lower()
-
     habit_name, category = parse_habit(request.POST)
     if not habit_name:
         messages.error(request, "Please select a valid habit.")
@@ -94,45 +92,26 @@ def index(request):
         )
         return redirect("login")
 
-    if email and Profile.objects.filter(user_email=email).exists():
-        messages.info(request, "User with this email already exists")
-        return render(request, "habits/index.html")
-
     request.session["pending_registration"] = {
         "phone": clean_number,
         "password": password,
         "habit_name": habit_name,
         "category": category,
-        "email": email,
     }
     request.session.modified = True
     request.session.save()
 
     otp = generate_otp()
-    sent, method = send_otp(clean_number, otp, email=email or None)
+    sent, _ = send_otp(clean_number, otp)
 
     if not sent:
-
-        if not email:
-            messages.error(
-                request,
-                "We couldn't reach that number on WhatsApp. "
-                "Add your email address and we'll send the code there instead.",
-            )
-        else:
-            messages.error(
-                request, "We couldn't send a verification code. Please try again."
-            )
+        messages.error(
+            request,
+            "We couldn't reach that number on WhatsApp. Please try again.",
+        )
         return render(request, "habits/index.html")
 
-    request.session["otp_method"] = method
-    store_otp(request, clean_number, otp, method=method)
-
-    if method == "email":
-        messages.info(
-            request,
-            f"WhatsApp is currently at capacity. We sent your code to {email} instead.",
-        )
+    store_otp(request, clean_number, otp)
 
     return redirect("verify_otp")
 
@@ -155,29 +134,25 @@ def verify_otp_view(request):
         messages.error(request, "Session expired. Please register again.")
         return redirect("index")
 
-    otp_method = request.session.get("otp_method", "whatsapp")
-
     if request.method != "POST":
-        return render(request, "habits/verify_otp.html", {"otp_method": otp_method})
+        return render(request, "habits/verify_otp.html")
 
     submitted_otp = request.POST.get("otp", "").strip()
     if not submitted_otp:
         messages.error(request, "Please enter the code we sent you.")
-        return render(request, "habits/verify_otp.html", {"otp_method": otp_method})
+        return render(request, "habits/verify_otp.html")
 
     valid, msg = verify_otp_code(request, pending["phone"], submitted_otp)
     if not valid:
         messages.error(request, msg)
-        return render(request, "habits/verify_otp.html", {"otp_method": otp_method})
+        return render(request, "habits/verify_otp.html")
 
     phone = pending["phone"]
     password = pending["password"]
-    email = pending.get("email", "")
     habit_name = pending["habit_name"]
     category = pending["category"]
 
     request.session.pop("pending_registration", None)
-    request.session.pop("otp_method", None)
     request.session.save()
 
     if User.objects.filter(username=phone).exists():
@@ -191,12 +166,11 @@ def verify_otp_view(request):
             user = User.objects.create_user(
                 username=phone,
                 password=password,
-                email=email,
             )
             Profile.objects.create(
                 user=user,
                 phone_number=phone,
-                is_whatsapp_verified=(otp_method == "whatsapp"),
+                is_whatsapp_verified=True,
             )
             Habit.objects.create(
                 user=user,
@@ -205,7 +179,6 @@ def verify_otp_view(request):
             )
 
     except IntegrityError:
-
         logger.warning(
             "IntegrityError on account creation for %s — possible race", phone
         )
@@ -222,15 +195,14 @@ def verify_otp_view(request):
 
     login(request, user, backend="django.contrib.auth.backends.ModelBackend")
 
-    if otp_method == "whatsapp":
-        try:
-            send_whatsapp_message(
-                phone,
-                "Welcome to DearSelf. I will remind you 3 times a day. "
-                "If you miss 3 days streak you are out. Be warned.",
-            )
-        except Exception as e:
-            logger.warning("Welcome message failed for %s: %s", phone[:4], e)
+    try:
+        send_whatsapp_message(
+            phone,
+            "Welcome to DearSelf. I will remind you 3 times a day. "
+            "If you miss 3 days streak you are out. Be warned.",
+        )
+    except Exception as e:
+        logger.warning("Welcome message failed for %s: %s", phone[:4], e)
 
     return redirect("habit_list")
 
@@ -246,21 +218,14 @@ def resend_otp(request):
         return redirect("index")
 
     otp = generate_otp()
-    sent, method = send_otp(pending["phone"], otp, email=pending.get("email") or None)
+    sent, _ = send_otp(pending["phone"], otp)
 
     if not sent:
         messages.error(request, "Failed to resend. Please try again.")
         return redirect("verify_otp")
 
-    request.session["otp_method"] = method
-    store_otp(request, pending["phone"], otp, method=method)
-
-    if method == "email":
-        messages.success(
-            request, f"Code resent to {pending.get('email', 'your email')}."
-        )
-    else:
-        messages.success(request, "A new code has been sent to your WhatsApp.")
+    store_otp(request, pending["phone"], otp)
+    messages.success(request, "A new code has been sent to your WhatsApp.")
 
     return redirect("verify_otp")
 
@@ -288,7 +253,7 @@ def login_view(request):
             request,
             group="login_user",
             key=lambda g, r: clean_number,
-            rate="5/h",
+            rate="10/h",
             method="POST",
             increment=True,
         ):
@@ -425,7 +390,7 @@ def add_habit(request):
             if request.headers.get("HX-Request"):
                 return HttpResponse(
                     status=204,
-                    headers={"HX-Redirect": "/habits/"}   
+                    headers={"HX-Redirect": "/habits/"}
                 )
 
     except Exception as e:
