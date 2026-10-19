@@ -52,6 +52,36 @@ jobs:
       - name: Run Django unit + integration tests
         run: python manage.py test habits --verbosity=2 --failfast
 
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test   
+    steps:
+      - name: Deploy to Render
+        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+
+  # Runs against the live site, so it only makes sense after the deploy.
+  # It reports problems but can't block a deploy that already happened.
+  e2e:
+    runs-on: ubuntu-latest
+    needs: deploy
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Wait for Render to finish deploying
+        run: sleep 240
+
       
       - name: Install Playwright browsers
         run: playwright install --with-deps chromium webkit firefox
@@ -66,10 +96,3 @@ jobs:
           E2E_TESTING: True
       
         run: pytest tests/e2e/ --browser chromium --browser webkit --verbosity=2
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: test   
-    steps:
-      - name: Deploy to Render
-        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}

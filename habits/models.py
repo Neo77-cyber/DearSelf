@@ -102,13 +102,20 @@ class Habit(models.Model):
             self.longest_streak = self.current_streak
 
         self.last_marked_date = today
+        # Misses count in a row: showing up resets them.
+        self.missed_count = 0
 
         DailyRecord.objects.update_or_create(
             habit=self, date=today, defaults={"completed": True}
         )
 
         self.save(
-            update_fields=["current_streak", "longest_streak", "last_marked_date"]
+            update_fields=[
+                "current_streak",
+                "longest_streak",
+                "last_marked_date",
+                "missed_count",
+            ]
         )
 
         return {
@@ -146,3 +153,16 @@ class DailyRecord(models.Model):
 
     def __str__(self):
         return f"{self.habit.name} on {self.date}"
+
+
+class PhoneOTP(models.Model):
+    # One live signup code per phone. Kept in the DB rather than the session so the
+    # concurrent requests of a double tap can't overwrite or wipe each other's code.
+    phone_number = models.CharField(max_length=13, unique=True)
+    otp_hash = models.CharField(max_length=64, blank=True)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    sent_at = models.DateTimeField()
+
+    def __str__(self):
+        return f"OTP for {self.phone_number}"

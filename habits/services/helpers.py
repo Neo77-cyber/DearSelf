@@ -1,3 +1,4 @@
+import ipaddress
 from typing import Union
 import phonenumbers
 from ..models import Habit
@@ -40,3 +41,22 @@ def mask_phone(phone: str) -> str:
     if not phone or len(phone) < 7:
         return "***"
     return phone[:4] + "****" + phone[-3:]
+
+
+def client_ip(request) -> str:
+    # Production sits behind Cloudflare + Render, so REMOTE_ADDR is a proxy shared by
+    # every visitor. Cloudflare overwrites CF-Connecting-IP, so clients can't spoof it.
+    candidates = [
+        request.META.get("HTTP_CF_CONNECTING_IP", ""),
+        request.META.get("HTTP_TRUE_CLIENT_IP", ""),
+        request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0],
+        request.META.get("REMOTE_ADDR", ""),
+    ]
+    for candidate in candidates:
+        candidate = candidate.strip()
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        return candidate
+    return ""

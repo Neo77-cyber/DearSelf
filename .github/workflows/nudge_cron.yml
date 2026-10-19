@@ -3,10 +3,11 @@ name: Scheduled Habit Jobs
 
 on:
   schedule:
-    - cron: '0 3 * * *'   
-    - cron: '0 6 * * *'   
-    - cron: '0 12 * * *'  
-    - cron: '0 19 * * *'  
+    # Times are UTC. Lagos is UTC+1.
+    - cron: '30 5 * * *'  # 06:30 Lagos: close yesterday, record misses
+    - cron: '0 6 * * *'   # 07:00 Lagos: morning reminder
+    - cron: '0 12 * * *'  # 13:00 Lagos: afternoon reminder
+    - cron: '0 19 * * *'  # 20:00 Lagos: night watch warning
 
   workflow_dispatch:
     inputs:
@@ -15,27 +16,26 @@ on:
         required: true
         type: choice
         options:
-          - generate_nudges
+          - close_day
           - morning_reminder
           - afternoon_reminder
           - night_watch
 
 jobs:
   
-  generate-nudges:
-    name: Generate AI Nudges
+  close-day:
+    name: Close Day (record misses)
     runs-on: ubuntu-latest
     if: |
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'generate_nudges') ||
-      github.event.schedule == '0 3 * * *' ||
-      github.event.schedule == '0 13 * * *'
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'close_day') ||
+      github.event.schedule == '30 5 * * *'
     steps:
-      - name: Call generate_nudges endpoint
+      - name: Trigger close_day
         run: |
           curl --fail --silent --show-error \
             -X POST \
             -H "X-Maintenance-Key: ${{ secrets.MAINTENANCE_KEY }}" \
-            "${{ secrets.APP_URL }}/maintenance_trigger/?task=generate_nudges"
+            "${{ secrets.APP_URL }}/maintenance_trigger/?task=close_day"
 
 
   morning-reminder:

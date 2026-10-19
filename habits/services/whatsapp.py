@@ -24,6 +24,11 @@ def mark_whatsapp_quota_exceeded():
 
 
 def send_whatsapp_message(phone_number: str, message: str) -> bool:
+    if settings.WHATSAPP_DRY_RUN:
+        # Local testing: log instead of sending, so no Green API chat slots are used.
+        logger.warning("[WHATSAPP DRY RUN] to %s:\n%s", phone_number, message)
+        return True
+
     if is_whatsapp_quota_exceeded():
         logger.info("WhatsApp quota cooldown active — skipping send.")
         return False
@@ -32,7 +37,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
 
     try:
         url = (
-            f"https://api.green-api.com/waInstance{settings.GREEN_API_ID}/"
+            f"{settings.GREEN_API_URL.rstrip('/')}/waInstance{settings.GREEN_API_ID}/"
             f"sendMessage/{settings.GREEN_API_TOKEN}"
         )
         payload = {

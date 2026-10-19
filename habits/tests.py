@@ -9,7 +9,7 @@ from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import Habit, Profile
+from .models import Habit, PhoneOTP, Profile
 
 
 # Helpers
@@ -158,244 +158,167 @@ class GenerateOTPTests(TestCase):
 
 
 class StoreAndVerifyOTPTests(TestCase):
-    def setUp(self):
-        self.factory = RequestFactory()
-        self.request = self.factory.get("/")
+    PHONE = "2348000000001"
 
-        from django.contrib.sessions.backends.db import SessionStore
-
-        self.request.session = SessionStore()
-
-    def _store(self, phone, otp, method="whatsapp"):
+    def _store(self, phone, otp):
         from .services.otp import store_otp
 
-        store_otp(self.request, phone, otp, method=method)
+        store_otp(phone, otp)
 
     def _verify(self, phone, submitted):
         from .services.otp import verify_otp
 
-        return verify_otp(self.request, phone, submitted)
+        return verify_otp(phone, submitted)
 
     def test_correct_otp_succeeds(self):
-        self._store("2348000000001", "123456")
-        valid, msg = self._verify("2348000000001", "123456")
+        self._store(self.PHONE, "123456")
+        valid, msg = self._verify(self.PHONE, "123456")
         self.assertTrue(valid)
         self.assertEqual(msg, "ok")
 
+    def test_code_is_single_use(self):
+        self._store(self.PHONE, "123456")
+        self._verify(self.PHONE, "123456")
+        valid, _ = self._verify(self.PHONE, "123456")
+        self.assertFalse(valid)
+
     def test_wrong_otp_fails(self):
-        self._store("2348000000001", "123456")
-        valid, msg = self._verify("2348000000001", "999999")
+        self._store(self.PHONE, "123456")
+        valid, msg = self._verify(self.PHONE, "999999")
         self.assertFalse(valid)
         self.assertIn("Wrong", msg)
 
     def test_expired_otp_fails(self):
-        from .services.otp import store_otp, OTP_EXPIRY_MINUTES
-
-        store_otp(self.request, "2348000000001", "123456")
-
-        self.request.session["otp_data"]["expires_at"] = (
-            timezone.now() - timedelta(seconds=1)
-        ).timestamp()
-        valid, msg = self._verify("2348000000001", "123456")
+        self._store(self.PHONE, "123456")
+        PhoneOTP.objects.filter(phone_number=self.PHONE).update(
+            expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        valid, msg = self._verify(self.PHONE, "123456")
         self.assertFalse(valid)
         self.assertIn("expired", msg.lower())
 
-    def test_phone_mismatch_fails(self):
-        self._store("2348000000001", "123456")
-        valid, msg = self._verify("2348000000002", "123456")
+    def test_code_for_other_phone_fails(self):
+        self._store(self.PHONE, "123456")
+        valid, _ = self._verify("2348000000002", "123456")
         self.assertFalse(valid)
-        self.assertIn("mismatch", msg.lower())
 
-    def test_no_session_data_fails(self):
-        valid, msg = self._verify("2348000000001", "123456")
+    def test_no_stored_code_fails(self):
+        valid, msg = self._verify(self.PHONE, "123456")
         self.assertFalse(valid)
         self.assertIn("expired", msg.lower())
 
     def test_max_attempts_locks_out(self):
         from .services.otp import OTP_MAX_ATTEMPTS
 
-        self._store("2348000000001", "123456")
+        self._store(self.PHONE, "123456")
         for _ in range(OTP_MAX_ATTEMPTS):
-            self._verify("2348000000001", "000000")
-        valid, msg = self._verify("2348000000001", "123456")
+            self._verify(self.PHONE, "000000")
+        valid, _ = self._verify(self.PHONE, "123456")
         self.assertFalse(valid)
 
     def test_remaining_attempts_count_decrements(self):
         from .services.otp import OTP_MAX_ATTEMPTS
 
-        self._store("2348000000001", "123456")
-        _, msg = self._verify("2348000000001", "000000")
+        self._store(self.PHONE, "123456")
+        _, msg = self._verify(self.PHONE, "000000")
         self.assertIn(str(OTP_MAX_ATTEMPTS - 1), msg)
 
-    def test_clear_otp_removes_session_data(self):
+    def test_clear_otp_removes_code(self):
         from .services.otp import clear_otp
 
-        self._store("2348000000001", "123456")
-        clear_otp(self.request)
-        self.assertNotIn("otp_data", self.request.session)
+        self._store(self.PHONE, "123456")
+        clear_otp(self.PHONE)
+        self.assertFalse(PhoneOTP.objects.filter(phone_number=self.PHONE).exists())
 
     def test_otp_hashed_not_stored_plaintext(self):
-        self._store("2348000000001", "123456")
-        stored = self.request.session["otp_data"]["otp_hash"]
-        self.assertNotEqual(stored, "123456")
-        self.assertEqual(stored, hashlib.sha256("123456".encode()).hexdigest())
+        self._store(self.PHONE, "123456")
+        stored = PhoneOTP.objects.get(phone_number=self.PHONE).otp_hash
+        self.assertNotIn("123456", stored)
+        self.assertNotEqual(stored, hashlib.sha256(b"123456").hexdigest())
+
+
+class ClaimOTPSendTests(TestCase):
+    PHONE = "2348000000001"
+
+    def test_only_first_claim_wins_within_cooldown(self):
+        from .services.otp import claim_otp_send
+
+        self.assertTrue(claim_otp_send(self.PHONE))
+        self.assertFalse(claim_otp_send(self.PHONE))
+
+    def test_claim_allowed_again_after_cooldown(self):
+        from .services.otp import OTP_RESEND_COOLDOWN_SECONDS, claim_otp_send
+
+        claim_otp_send(self.PHONE)
+        PhoneOTP.objects.filter(phone_number=self.PHONE).update(
+            sent_at=timezone.now() - timedelta(seconds=OTP_RESEND_COOLDOWN_SECONDS + 1)
+        )
+        self.assertTrue(claim_otp_send(self.PHONE))
+
+    def test_release_lets_user_retry_immediately(self):
+        from .services.otp import claim_otp_send, release_otp_send
+
+        claim_otp_send(self.PHONE)
+        release_otp_send(self.PHONE)
+        self.assertTrue(claim_otp_send(self.PHONE))
+
+
+class ClientIPTests(TestCase):
+    def _ip(self, **meta):
+        from .services.helpers import client_ip
+
+        request = RequestFactory().get("/", **meta)
+        return client_ip(request)
+
+    def test_prefers_cloudflare_header(self):
+        self.assertEqual(
+            self._ip(
+                HTTP_CF_CONNECTING_IP="41.58.1.1",
+                HTTP_X_FORWARDED_FOR="1.2.3.4",
+                REMOTE_ADDR="10.0.0.1",
+            ),
+            "41.58.1.1",
+        )
+
+    def test_falls_back_to_first_forwarded_for(self):
+        self.assertEqual(
+            self._ip(HTTP_X_FORWARDED_FOR="41.58.1.1, 10.0.0.2", REMOTE_ADDR="10.0.0.1"),
+            "41.58.1.1",
+        )
+
+    def test_skips_garbage_values(self):
+        self.assertEqual(
+            self._ip(HTTP_CF_CONNECTING_IP="not-an-ip", REMOTE_ADDR="10.0.0.1"),
+            "10.0.0.1",
+        )
 
 
 class SendOTPTests(TestCase):
 
-    def _send_otp(self, phone, otp, email=None):
-
-        import habits.services.otp as otp_module
-
-        fn = getattr(otp_module.send_otp, "__wrapped__", otp_module.send_otp)
-
-        return fn(phone, otp, email)
-
     @patch("habits.services.otp.is_whatsapp_quota_exceeded", return_value=False)
     @patch("habits.services.otp.send_otp_whatsapp", return_value=True)
     def test_sends_via_whatsapp_when_available(self, mock_wa, mock_quota):
-        sent, method = self._send_otp("2348000000001", "123456")
+        from .services.otp import send_otp
+
+        sent, method = send_otp("2348000000001", "123456")
         self.assertTrue(sent)
         self.assertEqual(method, "whatsapp")
 
     @patch("habits.services.otp.is_whatsapp_quota_exceeded", return_value=True)
-    @patch("habits.services.otp.send_otp_email", return_value=True)
-    def test_falls_back_to_email_when_whatsapp_quota_exceeded(
-        self, mock_email, mock_quota
-    ):
-        sent, method = self._send_otp(
-            "2348000000001", "123456", email="user@example.com"
-        )
-        self.assertTrue(sent)
-        self.assertEqual(method, "email")
+    def test_returns_false_when_quota_exceeded(self, mock_quota):
+        from .services.otp import send_otp
 
-    @patch("habits.services.otp.is_whatsapp_quota_exceeded", return_value=False)
-    @patch("habits.services.otp.send_otp_whatsapp", return_value=False)
-    @patch("habits.services.otp.send_otp_email", return_value=True)
-    def test_falls_back_to_email_when_whatsapp_send_fails(
-        self, mock_email, mock_wa, mock_quota
-    ):
-        sent, method = self._send_otp(
-            "2348000000001", "123456", email="user@example.com"
-        )
-        self.assertTrue(sent)
-        self.assertEqual(method, "email")
-
-    @patch("habits.services.otp.is_whatsapp_quota_exceeded", return_value=True)
-    def test_returns_false_when_quota_exceeded_and_no_email(self, mock_quota):
-        sent, method = self._send_otp("2348000000001", "123456", email=None)
+        sent, method = send_otp("2348000000001", "123456")
         self.assertFalse(sent)
         self.assertIsNone(method)
 
     @patch("habits.services.otp.is_whatsapp_quota_exceeded", return_value=False)
     @patch("habits.services.otp.send_otp_whatsapp", return_value=False)
-    def test_returns_false_when_all_channels_fail(self, mock_wa, mock_quota):
-        sent, method = self._send_otp("2348000000001", "123456", email=None)
+    def test_returns_false_when_whatsapp_send_fails(self, mock_wa, mock_quota):
+        from .services.otp import send_otp
+
+        sent, _ = send_otp("2348000000001", "123456")
         self.assertFalse(sent)
-
-
-# Email service
-
-
-from unittest.mock import patch, MagicMock
-from django.test import TestCase, override_settings
-from django.core import mail
-
-
-@override_settings(
-    RESEND_API_KEY="test_key_123",
-    DEFAULT_FROM_EMAIL="support@retechloans.com",
-)
-class SendOTPEmailTests(TestCase):
-
-    def _call(self, email, otp, expiry=15):
-        from .services.email_service import send_otp_email
-
-        return send_otp_email(email, otp, expiry)
-
-    @patch("habits.services.email_service.requests.post")
-    def test_returns_true_on_success(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
-
-        result = self._call("test@example.com", "654321")
-        self.assertTrue(result)
-
-    @patch("habits.services.email_service.requests.post")
-    def test_makes_correct_api_call(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
-
-        self._call("user@example.com", "777888")
-
-        mock_post.assert_called_once()
-        args, kwargs = mock_post.call_args
-        self.assertEqual(args[0], "https://api.resend.com/emails")
-        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test_key_123")
-        self.assertEqual(kwargs["json"]["to"], ["user@example.com"])
-        self.assertIn("777888", kwargs["json"]["html"])
-
-    @patch("habits.services.email_service.requests.post")
-    def test_otp_in_email_body(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
-
-        self._call("user@example.com", "777888")
-
-        call_args = mock_post.call_args[1]
-        html_body = call_args["json"]["html"]
-        text_body = call_args["json"]["text"]
-        self.assertIn("777888", html_body)
-        self.assertIn("777888", text_body)
-
-    @patch("habits.services.email_service.requests.post")
-    def test_returns_false_on_api_error(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.text = "Invalid email"
-        mock_post.return_value = mock_response
-
-        result = self._call("bad@example.com", "000000")
-        self.assertFalse(result)
-
-    @patch("habits.services.email_service.requests.post")
-    def test_returns_false_on_exception(self, mock_post):
-        mock_post.side_effect = Exception("Network error")
-
-        result = self._call("test@example.com", "123456")
-        self.assertFalse(result)
-
-    @patch("habits.services.email_service.requests.post")
-    def test_from_email_is_correct(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
-
-        self._call("user@example.com", "123456")
-
-        call_args = mock_post.call_args[1]
-        self.assertEqual(
-            call_args["json"]["from"], "DearSelf <support@retechloans.com>"
-        )
-
-    @patch("habits.services.email_service.requests.post")
-    def test_subject_is_correct(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
-
-        self._call("user@example.com", "123456")
-
-        call_args = mock_post.call_args[1]
-        self.assertEqual(
-            call_args["json"]["subject"], "Your DearSelf verification code"
-        )
-
-
-# WhatsApp service
 
 
 class WhatsAppServiceTests(TestCase):
@@ -672,8 +595,7 @@ class RegressionTests(TestCase):
         response = self.client.get(reverse("verify_otp"))
         self.assertEqual(response.status_code, 200)
         self.assertIn("pending_registration", self.client.session)
-        self.assertIn("otp_data", self.client.session)  # now actually written
-        self.assertIn("otp_method", self.client.session)
+        self.assertTrue(PhoneOTP.objects.filter(phone_number=CLEAN_PHONE).exists())
 
 
 @override_settings(RATELIMIT_ENABLE=False)
@@ -747,22 +669,18 @@ class IndexViewTests(TestCase):
         self.assertIsNotNone(pending)
         self.assertEqual(pending["phone"], CLEAN_PHONE)
 
+    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.views.is_ratelimited", return_value=False)
+    def test_double_tap_register_sends_one_code(self, mock_rl, mock_send):
+        first = self._post()
+        second = self._post()
+        self.assertEqual(mock_send.call_count, 1)
+        self.assertRedirects(second, reverse("verify_otp"))
+
     @patch("habits.views.send_otp", return_value=(False, None))
     def test_send_otp_failure_shows_error(self, mock_send):
         response = self._post()
         self.assertEqual(response.status_code, 200)
-
-    @patch("habits.views.send_otp", return_value=(True, "email"))
-    @patch("habits.views.store_otp")
-    @patch("habits.views.is_ratelimited", return_value=False)
-    def test_email_fallback_shows_info_message(self, mock_rl, mock_store, mock_send):
-        response = self._post(email="user@example.com")
-        # Email fallback message should be shown
-        messages_list = list(response.wsgi_request._messages)
-        texts = [str(m) for m in messages_list]
-        self.assertTrue(
-            any("email" in t.lower() or "capacity" in t.lower() for t in texts)
-        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -783,18 +701,11 @@ class VerifyOTPViewTests(TestCase):
             "category": Habit.HABIT_CHOICES[0][0],
             "email": "",
         }
-        session["otp_method"] = "whatsapp"
-        otp = "123456"
-        hashed = hashlib.sha256(otp.encode()).hexdigest()
-        session["otp_data"] = {
-            "otp_hash": hashed,
-            "phone": CLEAN_PHONE,
-            "expires_at": (timezone.now() + timedelta(minutes=15)).timestamp(),
-            "attempts": 0,
-            "method": "whatsapp",
-        }
         session.save()
-        self.otp = otp
+        from .services.otp import store_otp
+
+        self.otp = "123456"
+        store_otp(CLEAN_PHONE, self.otp)
 
     def test_get_renders_verify_page(self):
         response = self.client.get(self.url)
@@ -844,6 +755,42 @@ class VerifyOTPViewTests(TestCase):
         response = self.client.post(self.url, {"otp": ""})
         self.assertEqual(response.status_code, 200)
 
+    @patch("habits.views.send_whatsapp_message")
+    def test_new_user_can_log_in_with_registered_password(self, mock_wa):
+        self.client.post(self.url, {"otp": self.otp})
+        self.assertTrue(User.objects.get(username=CLEAN_PHONE).check_password(VALID_PASS))
+
+    def _signed_phone(self):
+        import re
+
+        page = self.client.get(self.url).content.decode()
+        return re.search(r'name="signed_phone" value="([^"]+)"', page).group(1)
+
+    @patch("habits.views.send_whatsapp_message")
+    def test_double_submit_lands_on_login_not_error(self, mock_wa):
+        from django.conf import settings
+
+        signed = self._signed_phone()
+        old_session = self.client.cookies[settings.SESSION_COOKIE_NAME].value
+        self.client.post(self.url, {"otp": self.otp, "signed_phone": signed})
+
+        # The second tap left before the first response arrived, so it carries
+        # the pre-login session cookie that login() has since rotated away.
+        second = Client()
+        second.cookies[settings.SESSION_COOKIE_NAME] = old_session
+        response = second.post(
+            self.url, {"otp": self.otp, "signed_phone": signed}, follow=True
+        )
+        self.assertRedirects(response, reverse("login"))
+        self.assertContains(response, "Your account is ready")
+
+    def test_tampered_signed_phone_is_ignored(self):
+        self.client.session.flush()
+        response = self.client.post(
+            self.url, {"otp": self.otp, "signed_phone": "forged"}
+        )
+        self.assertRedirects(response, reverse("index"))
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Resend OTP view
@@ -880,15 +827,11 @@ class ResendOTPViewTests(TestCase):
         response = self.client.post(self.url)
         self.assertRedirects(response, reverse("index"))
 
-    @patch("habits.views.send_otp", return_value=(True, "email"))
-    @patch("habits.views.store_otp")
-    def test_email_resend_shows_email_success_message(self, mock_store, mock_send):
-        response = self.client.post(self.url, follow=True)
-        messages_text = "".join(str(m) for m in response.context["messages"])
-        # Message is "Code resent to <email>" or similar — check for email address or keyword
-        self.assertTrue(
-            "email" in messages_text.lower() or "example.com" in messages_text.lower()
-        )
+    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
+    def test_second_resend_within_cooldown_does_not_send(self, mock_send):
+        self.client.post(self.url)
+        self.client.post(self.url)
+        self.assertEqual(mock_send.call_count, 1)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1268,7 +1211,7 @@ class MaintenanceTriggerTests(TestCase):
             ),
             f"Message should contain a fallback nudge. Got: {call_args[:100]}...",
         )
-        self.assertIn("https://dear-self.onrender.com/habits/", call_args)
+        self.assertIn("https://dear-self.onrender.com/c/", call_args)
 
     # --- night_watch ---
 
@@ -1278,24 +1221,101 @@ class MaintenanceTriggerTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
     @patch("habits.views.send_whatsapp_message", return_value=True)
-    def test_night_watch_records_miss_for_stale_habits(self, mock_wa):
-        yesterday = timezone.localdate() - timedelta(days=2)
-        self.habit.last_marked_date = yesterday
-        self.habit.save()
-        initial_misses = self.habit.missed_count
+    def test_night_watch_only_warns_and_never_records_misses(self, mock_wa):
         self._post("night_watch")
         self.habit.refresh_from_db()
-        self.assertGreater(self.habit.missed_count, initial_misses)
+        self.assertEqual(self.habit.missed_count, 0)
+        self.assertIn("until 6am", mock_wa.call_args[0][1])
 
     @patch("habits.views.send_whatsapp_message", return_value=True)
-    def test_night_watch_bans_user_after_3_misses(self, mock_wa):
-        yesterday = timezone.localdate() - timedelta(days=2)
-        self.habit.last_marked_date = yesterday
-        self.habit.missed_count = 2
-        self.habit.save()
+    def test_night_watch_skips_users_already_clocked_in(self, mock_wa):
+        self.habit.mark_done()
         self._post("night_watch")
+        mock_wa.assert_not_called()
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_send_nudges_skips_users_already_clocked_in(self, mock_wa):
+        self.habit.mark_done()
+        response = self._post("send_nudges")
+        mock_wa.assert_not_called()
+        self.assertIn("1 already done", response.content.decode())
+
+    # --- close_day ---
+
+    def _age_habit(self, days=3):
+        Habit.objects.filter(pk=self.habit.pk).update(
+            created_at=timezone.now() - timedelta(days=days)
+        )
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_close_day_records_miss(self, mock_wa):
+        self._age_habit()
+        self._post("close_day")
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.missed_count, 1)
+        self.assertEqual(self.habit.current_streak, 0)
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_close_day_twice_counts_one_miss(self, mock_wa):
+        # GitHub Actions can retry or be re-run by hand.
+        self._age_habit()
+        self._post("close_day")
+        self._post("close_day")
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.missed_count, 1)
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_close_day_counts_users_who_never_clocked_in(self, mock_wa):
+        self._age_habit()
+        self.assertIsNone(self.habit.last_marked_date)
+        self._post("close_day")
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.missed_count, 1)
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_close_day_does_not_punish_signup_day(self, mock_wa):
+        self._post("close_day")
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.missed_count, 0)
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_close_day_spares_habit_done_yesterday(self, mock_wa):
+        from .models import DailyRecord, get_logical_date
+
+        self._age_habit()
+        DailyRecord.objects.create(
+            habit=self.habit, date=get_logical_date() - timedelta(days=1), completed=True
+        )
+        self._post("close_day")
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.missed_count, 0)
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_close_day_third_miss_bans_and_notifies(self, mock_wa):
+        self._age_habit()
+        Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
+        self._post("close_day")
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_active)
+        self.assertIn("3 misses", mock_wa.call_args[0][1])
+
+    @patch("habits.views.send_whatsapp_message", return_value=True)
+    def test_clocking_in_resets_misses(self, mock_wa):
+        # Misses count in a row: 2 misses, a clock-in, then a miss is 1, not 3.
+        self._age_habit()
+        Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
+        self.habit.refresh_from_db()
+        self.habit.mark_done()
+        self.assertEqual(self.habit.missed_count, 0)
+
+        from .services.streaks import close_day
+        from .models import get_logical_date
+
+        close_day(get_logical_date() + timedelta(days=1))
+        self.habit.refresh_from_db()
+        self.user.refresh_from_db()
+        self.assertEqual(self.habit.missed_count, 1)
+        self.assertTrue(self.user.is_active)
 
     # --- debug_nudges ---
 
@@ -1321,6 +1341,61 @@ class MaintenanceTriggerTests(TestCase):
 # ──────────────────────────────────────────────────────────────────────────────
 # Health check
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+@override_settings(RATELIMIT_ENABLE=False)
+class ClockInLinkTests(TestCase):
+    def setUp(self):
+        from .services.clockin import clock_in_url
+
+        self.user = make_user()
+        self.habit = make_habit(self.user)
+        self.url = clock_in_url(self.user).replace("https://dear-self.onrender.com", "")
+
+    def test_opening_link_does_not_clock_in(self):
+        # WhatsApp prefetches links for previews; a GET must never mark a habit.
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "I did it")
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.current_streak, 0)
+
+    def test_tapping_button_clocks_in_without_login(self):
+        response = self.client.post(self.url, {"habit_id": self.habit.id}, follow=True)
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.current_streak, 1)
+        self.assertContains(response, "1 day streak")
+        self.assertContains(response, "All done today")
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_cannot_clock_in_someone_elses_habit(self):
+        other = make_habit(make_user(phone="2348000000002"))
+        self.client.post(self.url, {"habit_id": other.id})
+        other.refresh_from_db()
+        self.assertEqual(other.current_streak, 0)
+
+    def test_forged_token_is_rejected(self):
+        response = self.client.get(self.url[:-3] + "xx/")
+        self.assertEqual(response.status_code, 410)
+
+    def test_yesterdays_link_is_rejected(self):
+        with patch(
+            "habits.services.clockin.get_logical_date",
+            return_value=timezone.localdate() - timedelta(days=1),
+        ):
+            from .services.clockin import clock_in_url
+
+            old_url = clock_in_url(self.user).replace("https://dear-self.onrender.com", "")
+        response = self.client.post(old_url, {"habit_id": self.habit.id})
+        self.assertEqual(response.status_code, 410)
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.current_streak, 0)
+
+    def test_banned_user_link_redirects_to_banned(self):
+        self.user.is_active = False
+        self.user.save()
+        response = self.client.get(self.url)
+        self.assertRedirects(response, reverse("banned"), target_status_code=403)
 
 
 class HealthCheckTests(TestCase):
@@ -1363,17 +1438,25 @@ class SecurityTests(TestCase):
         self.assertIn("hmac.compare_digest", source)
 
     def test_otp_stored_as_hash_not_plaintext(self):
-
-        factory = RequestFactory()
-        request = factory.get("/")
-        from django.contrib.sessions.backends.db import SessionStore
-
-        request.session = SessionStore()
         from .services.otp import store_otp
 
-        store_otp(request, CLEAN_PHONE, "123456")
-        stored = request.session["otp_data"]["otp_hash"]
+        store_otp(CLEAN_PHONE, "123456")
+        stored = PhoneOTP.objects.get(phone_number=CLEAN_PHONE).otp_hash
         self.assertNotEqual(stored, "123456")
+
+    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
+    def test_registration_never_puts_raw_password_in_session(self, mock_send):
+        self.client.post(
+            reverse("index"),
+            {
+                "identifier": CLEAN_PHONE,
+                "password": VALID_PASS,
+                "habit_choice": Habit.HABIT_CHOICES[0][0],
+            },
+        )
+        pending = self.client.session["pending_registration"]
+        self.assertNotIn("password", pending)
+        self.assertNotIn(VALID_PASS, json.dumps(dict(self.client.session)))
 
     def test_mark_done_requires_post(self):
         user = make_user()

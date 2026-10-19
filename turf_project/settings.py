@@ -178,7 +178,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # --- SECURITY & SESSIONS ---
 SESSION_ENGINE = "django.contrib.sessions.backends.db"
 SESSION_SAVE_EVERY_REQUEST = True
-SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=True)
 SESSION_COOKIE_HTTPONLY = True
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_COOKIE_AGE = 1_209_600
@@ -199,6 +199,9 @@ CSRF_TRUSTED_ORIGINS = [
 AXES_FAILURE_LIMIT = 10
 AXES_COOLOFF_TIME = 0.30
 AXES_LOCKOUT_TEMPLATE = "habits/lockout.html"
+AXES_CLIENT_IP_CALLABLE = "habits.services.helpers.client_ip"
+
+RATELIMIT_IP_META_KEY = "habits.services.helpers.client_ip"
 
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "habit_list"
@@ -257,9 +260,16 @@ INTERNAL_IPS = [
 # EXTERNAL API'S
 GREEN_API_ID = env("GREEN_API_ID_INSTANCE")
 GREEN_API_TOKEN = env("GREEN_API_TOKEN")
+# Each instance has its own apiUrl in the Green API console.
+GREEN_API_URL = env("GREEN_API_URL", default="https://api.green-api.com")
+# Log WhatsApp messages instead of sending them (local testing only).
+WHATSAPP_DRY_RUN = env.bool("WHATSAPP_DRY_RUN", default=False)
 GEMINI_API_KEY = env("GEMINI_API_KEY")
 
 MAINTENANCE_KEY = env("MAINTENANCE_KEY")
+
+# Used to build absolute links in WhatsApp messages.
+SITE_URL = env("SITE_URL", default="https://dear-self.onrender.com")
 
 RESEND_API_KEY = env("RESEND_API_KEY", default="")
 

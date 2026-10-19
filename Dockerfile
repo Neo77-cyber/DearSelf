@@ -32,4 +32,5 @@ USER appuser
 
 
 
-CMD ["gunicorn", "turf_project.wsgi:application", "--bind", "0.0.0.0:10000", "--workers", "2", "--threads", "4", "--log-level", "info", "--access-logfile", "-"]
+# Apply migrations on every boot so a deploy can't run code ahead of its schema.
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn turf_project.wsgi:application --bind 0.0.0.0:10000 --workers 2 --threads 4 --log-level info --access-logfile -"]

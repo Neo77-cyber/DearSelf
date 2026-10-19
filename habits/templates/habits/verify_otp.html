@@ -43,6 +43,7 @@
         <div class="glass-card p-8">
             <form method="post" action="{% url 'verify_otp' %}">
                 {% csrf_token %}
+                <input type="hidden" name="signed_phone" value="{{ signed_phone }}">
                 <div class="relative">
                     <input
                         type="text"
@@ -75,5 +76,18 @@
         </p>
     </div>
 
+    <script>
+        // Stop double taps: a second submit after the account is created would race the first.
+        document.querySelectorAll('form').forEach(form => {
+            form.addEventListener('submit', e => {
+                if (form.dataset.submitted) { e.preventDefault(); return; }
+                form.dataset.submitted = 'true';
+                form.querySelectorAll('button[type="submit"]').forEach(btn => {
+                    btn.disabled = true;
+                    btn.classList.add('opacity-60', 'cursor-not-allowed');
+                });
+            });
+        });
+    </script>
 </body>
 </html>

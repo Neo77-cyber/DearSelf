@@ -15,6 +15,7 @@ urlpatterns = [
         views.mark_habit_done,
         name="mark_habit_done",
     ),
+    path("c/<str:token>/", views.clock_in, name="clock_in"),
     path("banned/", views.banned_view, name="banned"),
     path("maintenance_trigger/", views.maintenance_trigger, name="maintenance_check"),
     path("health/", views.health_check, name="health_check"),
