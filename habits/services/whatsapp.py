@@ -18,9 +18,41 @@ def is_whatsapp_quota_exceeded() -> bool:
 def mark_whatsapp_quota_exceeded():
     cache.set(WA_QUOTA_EXCEEDED_KEY, True, timeout=WA_QUOTA_COOLDOWN)
     logger.warning(
-        "Green API quota exhausted — falling back to email for %dh.",
+        "Green API quota exhausted — pausing WhatsApp sends for %dh.",
         WA_QUOTA_COOLDOWN // 3600,
     )
+
+
+def green_api_base() -> str:
+    # Strip stray spaces or quotes pasted into the hosting dashboard.
+    base = settings.GREEN_API_URL.strip().strip("'\"").rstrip("/")
+    instance = str(settings.GREEN_API_ID).strip().strip("'\"")
+    return f"{base}/waInstance{instance}"
+
+
+def redact(text) -> str:
+    """Never let the API token reach logs or Sentry (it's part of every URL)."""
+    text = str(text)
+    token = str(settings.GREEN_API_TOKEN).strip().strip("'\"")
+    return text.replace(token, "<token>") if token else text
+
+
+def whatsapp_status() -> str:
+    """What the server sees when it talks to Green API, without the token."""
+    instance = str(settings.GREEN_API_ID)
+    lines = [
+        f"GREEN_API_URL: {settings.GREEN_API_URL!r}",
+        f"GREEN_API_ID_INSTANCE: {len(instance)} chars, digits only: {instance.strip().isdigit()}",
+        f"GREEN_API_TOKEN: {len(str(settings.GREEN_API_TOKEN))} chars",
+        f"quota cooldown active: {is_whatsapp_quota_exceeded()}",
+    ]
+    try:
+        token = str(settings.GREEN_API_TOKEN).strip().strip("'\"")
+        response = requests.get(f"{green_api_base()}/getStateInstance/{token}", timeout=10)
+        lines.append(f"getStateInstance: HTTP {response.status_code} {redact(response.text[:200])}")
+    except Exception as e:
+        lines.append(f"getStateInstance failed: {type(e).__name__}: {redact(e)}")
+    return "\n".join(lines)
 
 
 def send_whatsapp_message(phone_number: str, message: str) -> bool:
@@ -36,10 +68,8 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
     chat_id = f"{phone_number}@c.us"
 
     try:
-        url = (
-            f"{settings.GREEN_API_URL.rstrip('/')}/waInstance{settings.GREEN_API_ID}/"
-            f"sendMessage/{settings.GREEN_API_TOKEN}"
-        )
+        token = str(settings.GREEN_API_TOKEN).strip().strip("'\"")
+        url = f"{green_api_base()}/sendMessage/{token}"
         payload = {
             "chatId": chat_id,
             "message": message,
@@ -47,7 +77,11 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
         }
 
         response = requests.post(url, json=payload, timeout=10)
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError:
+            # Wrong address or instance id usually returns an HTML page, not JSON.
+            data = response.text[:200]
 
         if response.status_code == 200:
             return True
@@ -65,7 +99,7 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
             logger.error("Green API quota error %s: %s", response.status_code, data)
             return False
 
-        logger.error("Green API error %s: %s", response.status_code, data)
+        logger.error("Green API error %s: %s", response.status_code, redact(data))
         return False
 
     except requests.exceptions.Timeout:
@@ -75,7 +109,12 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
         error_str = str(e).lower()
         if "quota" in error_str or "limit" in error_str or "exhausted" in error_str:
             mark_whatsapp_quota_exceeded()
-        logger.error("Failed to send WA message to %s: %s", mask_phone(phone_number), e)
+        logger.error(
+            "Failed to send WA message to %s: %s: %s",
+            mask_phone(phone_number),
+            type(e).__name__,
+            redact(e),
+        )
         return False
 
 

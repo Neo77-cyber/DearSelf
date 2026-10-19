@@ -36,6 +36,7 @@ from .services.otp import (
 )
 from .services.telegram import bot_link, telegram_enabled
 from .services.telegram_bot import handle_update
+from .services.whatsapp import whatsapp_status
 
 logger = logging.getLogger(__name__)
 
@@ -676,6 +677,9 @@ def maintenance_trigger(request):
             f"Closed {result['day']}. {result['misses']} misses recorded. "
             f"{len(result['banned'])} banned."
         )
+
+    if task == "whatsapp_status":
+        return HttpResponse(whatsapp_status(), content_type="text/plain")
 
     if task == "debug_nudges":
         habits = Habit.objects.filter(user__is_active=True).select_related(

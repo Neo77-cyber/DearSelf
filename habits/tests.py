@@ -1591,6 +1591,54 @@ class TelegramBotTests(TestCase):
         self.assertIn("done:", json.dumps(kwargs["reply_markup"]))
 
 
+@override_settings(
+    WHATSAPP_DRY_RUN=False,
+    GREEN_API_URL=" https://7107.api.greenapi.com/ ",
+    GREEN_API_ID=" 7107 ",
+    GREEN_API_TOKEN="secret-token",
+)
+class GreenApiRobustnessTests(TestCase):
+    @patch("habits.services.whatsapp.requests.post")
+    def test_pasted_spaces_are_stripped_from_url(self, mock_post):
+        from .services.whatsapp import send_whatsapp_message
+
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: {})
+        self.assertTrue(send_whatsapp_message(CLEAN_PHONE, "hi"))
+        self.assertEqual(
+            mock_post.call_args[0][0],
+            "https://7107.api.greenapi.com/waInstance7107/sendMessage/secret-token",
+        )
+
+    @patch("habits.services.whatsapp.requests.post")
+    def test_non_json_reply_is_reported_not_crashed(self, mock_post):
+        from .services.whatsapp import send_whatsapp_message
+
+        def bad_json():
+            raise ValueError("Expecting value")
+
+        mock_post.return_value = MagicMock(status_code=404, json=bad_json, text="<html>Not found</html>")
+        with self.assertLogs("habits.services.whatsapp", level="ERROR") as logs:
+            self.assertFalse(send_whatsapp_message(CLEAN_PHONE, "hi"))
+        self.assertIn("Green API error 404", logs.output[0])
+
+    @patch("habits.services.whatsapp.requests.post", side_effect=Exception("boom https://x/sendMessage/secret-token"))
+    def test_token_never_logged(self, mock_post):
+        from .services.whatsapp import send_whatsapp_message
+
+        with self.assertLogs("habits.services.whatsapp", level="ERROR") as logs:
+            send_whatsapp_message(CLEAN_PHONE, "hi")
+        self.assertNotIn("secret-token", "".join(logs.output))
+
+    @patch("habits.services.whatsapp.requests.get")
+    def test_status_report_hides_token(self, mock_get):
+        from .services.whatsapp import whatsapp_status
+
+        mock_get.return_value = MagicMock(status_code=200, text='{"stateInstance":"authorized"}')
+        report = whatsapp_status()
+        self.assertIn("authorized", report)
+        self.assertNotIn("secret-token", report)
+
+
 class HealthCheckTests(TestCase):
 
     def test_returns_200_ok(self):
