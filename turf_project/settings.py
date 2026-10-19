@@ -264,6 +264,12 @@ GREEN_API_TOKEN = env("GREEN_API_TOKEN")
 GREEN_API_URL = env("GREEN_API_URL", default="https://api.green-api.com")
 # Log WhatsApp messages instead of sending them (local testing only).
 WHATSAPP_DRY_RUN = env.bool("WHATSAPP_DRY_RUN", default=False)
+# Set to False to send every new signup to Telegram.
+WHATSAPP_SIGNUPS_ENABLED = env.bool("WHATSAPP_SIGNUPS_ENABLED", default=True)
+
+TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
+TELEGRAM_BOT_USERNAME = env("TELEGRAM_BOT_USERNAME", default="")
+TELEGRAM_WEBHOOK_SECRET = env("TELEGRAM_WEBHOOK_SECRET", default="")
 GEMINI_API_KEY = env("GEMINI_API_KEY")
 
 MAINTENANCE_KEY = env("MAINTENANCE_KEY")

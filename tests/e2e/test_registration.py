@@ -13,10 +13,16 @@ MAINTENANCE_KEY = os.getenv("MAINTENANCE_KEY", "")
 
 
 
+def use_password(page: Page):
+    # The password field is tucked behind a toggle now that login is code-first.
+    page.click("text=Have a password? Use it instead")
+
+
 def login(page: Page):
 
     page.goto(f"{BASE_URL}/login/")
     page.fill("[name=identifier]", TEST_PHONE)
+    use_password(page)
     page.fill("[name=password]", TEST_PASSWORD)
     page.click("[type=submit]")
 
@@ -36,7 +42,7 @@ def test_registration_page_loads(page: Page):
     
     page.goto(BASE_URL)
     expect(page.locator("[name=identifier]")).to_be_visible()
-    expect(page.locator("[name=password]")).to_be_visible()
+    expect(page.locator("[name=password]")).to_have_count(0)
     expect(page.get_by_role("radio").first).to_be_attached()
     expect(page.locator("button[type=submit]")).to_be_visible()
 
@@ -66,7 +72,6 @@ def test_login_page_loads(page: Page):
     
     page.goto(f"{BASE_URL}/login/")
     expect(page.locator("[name=identifier]")).to_be_visible()
-    expect(page.locator("[name=password]")).to_be_visible()
     expect(page.locator("button[type=submit]")).to_be_visible()
 
 
@@ -85,45 +90,11 @@ def test_registration_requires_valid_phone(page: Page):
     
     page.goto(BASE_URL)
     page.fill("[name=identifier]", "invalid")
-    page.fill("[name=password]", "ValidPass123!")
     page.get_by_role("radio", name="Daily Prayers").check()
     page.click("[type=submit]")
 
     body = page.locator("body").inner_text()
     assert "invalid" in body.lower() or "error" in body.lower()
-
-
-def test_registration_requires_strong_password(page: Page):
-    
-    page.goto(BASE_URL)
-    page.fill("[name=identifier]", "8123456789")
-    page.fill("[name=password]", "123")
-    page.get_by_role("radio", name="Daily Prayers").check()
-    page.click("[type=submit]")
-
-    body = page.locator("body").inner_text()
-    assert "password" in body.lower()
-
-
-def test_registration_with_email_fallback_works(page: Page):
-    
-    random_phone = f"8{random.randint(100000000, 199999999)}"
-
-    page.goto(BASE_URL)
-    page.fill("[name=identifier]", random_phone)
-    page.fill("[name=password]", "StrongPass123!")
-    page.fill("[name=email]", TEST_EMAIL)
-    page.get_by_role("radio", name="Work Out").check()
-    page.click("[type=submit]")
-
-    current_url = page.url
-    body = page.locator("body").inner_text()
-
-    assert (
-        "/verify-otp/" in current_url
-        or "error" in body.lower()
-        or "couldn't" in body.lower()
-    ), f"Registration failed: {body[:300]}"
 
 
 # ================================================================
@@ -142,6 +113,7 @@ def test_login_wrong_password_shows_error(page: Page):
     
     page.goto(f"{BASE_URL}/login/")
     page.fill("[name=identifier]", TEST_PHONE)
+    use_password(page)
     page.fill("[name=password]", "WrongPassword999!")
     page.click("[type=submit]")
     expect(page).to_have_url(f"{BASE_URL}/login/")
@@ -152,7 +124,6 @@ def test_login_invalid_phone_shows_error(page: Page):
     
     page.goto(f"{BASE_URL}/login/")
     page.fill("[name=identifier]", "notaphone")
-    page.fill("[name=password]", TEST_PASSWORD)
     page.click("[type=submit]")
     expect(page).to_have_url(f"{BASE_URL}/login/")
 
@@ -322,7 +293,7 @@ def test_mobile_viewport_works(page: Page):
     page.set_viewport_size({"width": 375, "height": 667})  
     page.goto(BASE_URL)
     expect(page.locator("[name=identifier]")).to_be_visible()
-    expect(page.locator("[name=password]")).to_be_visible()
+    expect(page.locator("button[type=submit]")).to_be_visible()
 
 
 # ================================================================

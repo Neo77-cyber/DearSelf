@@ -31,7 +31,7 @@
             <h1 class="text-7xl font-extrabold leading-[1.1] tracking-tighter text-white">
                 Small Steps,<br><span class="text-violet-500">Big wins.</span>
             </h1>
-            <p class="text-gray-400 text-lg max-w-md font-medium leading-relaxed">Track habits and stay accountable via WhatsApp reminders.</p>
+            <p class="text-gray-400 text-lg max-w-md font-medium leading-relaxed">Track habits and stay accountable with reminders on WhatsApp or Telegram. One tap to clock in.</p>
             
             <div class="space-y-6 pt-2">
                 <div class="flex items-center gap-4">
@@ -44,7 +44,7 @@
                     <div class="icon-box">
                         <img src="{% static 'accounting(1).png' %}" alt="Shield" class="w-5 h-5 object-contain">
                     </div>
-                    <p class="text-sm font-semibold text-gray-300">After 3 streak misses; you're out.</p>
+                    <p class="text-sm font-semibold text-gray-300">Miss 3 days in a row and you're out.</p>
                 </div>
             </div>
         </div>
@@ -52,11 +52,11 @@
         <div class="form-container p-6 md:p-12 w-full max-w-xl mx-auto shadow-2xl">
             <div class="lg:hidden text-center mb-10 border-b border-white/5 pb-8">
                 <h1 class="text-4xl font-extrabold tracking-tighter mb-3 text-white">Small steps,<br><span class="text-violet-500">Big Wins.</span></h1>
-                <p class="text-gray-400 text-sm">Track your habits and stay accountable via WhatsApp reminders.</p>
+                <p class="text-gray-400 text-sm">Reminders on WhatsApp or Telegram. One tap to clock in.</p>
             </div>
 
-            <h2 class="text-2xl font-bold mb-1 tracking-tight text-white">Create account</h2>
-            <p class="text-gray-500 text-sm mb-8">Verification code will be sent to WhatsApp.</p>
+            <h2 class="text-2xl font-bold mb-1 tracking-tight text-white">Start in 30 seconds</h2>
+            <p class="text-gray-500 text-sm mb-8">{% if whatsapp_open %}Pick a habit, get a code on WhatsApp, done. No password.{% else %}Start on Telegram: one tap and you're in.{% endif %}</p>
             
             {% if messages %}
                 {% for message in messages %}
@@ -66,6 +66,7 @@
                 {% endfor %}
             {% endif %}
 
+            {% if whatsapp_open %}
             <form method="POST" class="space-y-6">
                 {% csrf_token %}
                 
@@ -74,16 +75,6 @@
                     <div class="flex items-center bg-black/40 border border-white/10 rounded-xl focus-within:border-violet-600 transition">
                         <span class="px-5 text-gray-500 font-bold border-r border-white/5 text-base">+234</span>
                         <input type="text" name="identifier" class="bg-transparent w-full p-4 outline-none text-white text-base md:text-sm" placeholder="8123456789" maxlength="10" required>
-                    </div>
-                </div>
-
-                <div>
-                    <label class="text-[10px] font-bold text-gray-500 uppercase mb-2 block tracking-widest">Password</label>
-                    <div class="relative">
-                        <input type="password" name="password" id="signup-pass" class="bg-black/40 border border-white/10 rounded-xl w-full p-4 outline-none focus:border-violet-600 transition text-base md:text-sm pr-14 text-white" required>
-                        <button type="button" class="toggle-password-btn absolute right-0 top-0 h-full px-4 text-gray-500 hover:text-violet-400">
-                            <svg class="eye-icon w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>
-                        </button>
                     </div>
                 </div>
 
@@ -138,13 +129,45 @@
 <input type="text" id="custom_habit" name="custom_habit" class="hidden w-full mt-4 bg-black/40 border border-white/10 rounded-xl p-4 outline-none focus:border-violet-600 transition text-base md:text-sm text-white" placeholder="Tell us what it is...">
 
                 <button type="submit" class="w-full bg-violet-600 hover:bg-violet-700 py-4 rounded-xl font-bold transition flex items-center justify-center gap-3 shadow-lg">
-    <span class="btn-text uppercase text-xs tracking-widest text-white">Start My Journey</span>
+    <span class="btn-text uppercase text-xs tracking-widest text-white">Get my code on WhatsApp</span>
     <div class="btn-spinner hidden w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
 </button>
             </form>
+            {% endif %}
+
+            {% if telegram_url %}
+                {% if whatsapp_open %}
+                <div class="flex items-center gap-4 my-6">
+                    <div class="flex-1 h-px bg-white/10"></div>
+                    <span class="text-[10px] font-bold uppercase tracking-widest text-gray-500">or</span>
+                    <div class="flex-1 h-px bg-white/10"></div>
+                </div>
+                {% endif %}
+                <a href="{{ telegram_url }}" id="telegram-start" data-base="{{ telegram_url }}" target="_blank" rel="noopener" class="w-full {% if whatsapp_open %}bg-white/5 hover:bg-white/10 border border-white/10{% else %}bg-sky-500 hover:bg-sky-600{% endif %} py-4 rounded-xl font-bold transition flex items-center justify-center gap-3 text-white">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.04 15.47l-.38 5.34c.54 0 .78-.23 1.06-.51l2.55-2.44 5.28 3.87c.97.53 1.65.25 1.91-.9l3.47-16.24c.31-1.43-.52-1.99-1.46-1.64L1.07 10.2c-1.39.54-1.37 1.32-.24 1.67l5.2 1.62L18.1 5.9c.57-.38 1.09-.17.66.21"/></svg>
+                    <span class="uppercase text-xs tracking-widest">Start on Telegram</span>
+                </a>
+                <p class="text-center text-xs text-gray-500 mt-3">Tap Start in Telegram and you're in. No phone number, no code.</p>
+            {% elif not whatsapp_open %}
+                <p class="text-center text-sm text-gray-400">Signups are full right now. Check back soon.</p>
+            {% endif %}
             <p class="mt-8 text-center text-sm text-gray-500">Already have an account? <a href="{% url 'login' %}" class="text-violet-400 font-bold">Log in</a></p>
         </div>
     </main>
     <script src="{% static 'js/main.js' %}"></script>
+    <script>
+        // Carry the picked habit into Telegram so the bot can sign you up in one tap.
+        (() => {
+            const link = document.getElementById('telegram-start');
+            if (!link) return;
+            const sync = () => {
+                const picked = document.querySelector('input[name="habit_choice"]:checked');
+                const value = picked && picked.value !== 'something-else' ? picked.value : '';
+                link.href = value ? `${link.dataset.base}?start=${value.replace(/ /g, '_')}` : link.dataset.base;
+            };
+            document.querySelectorAll('input[name="habit_choice"]').forEach(r => r.addEventListener('change', sync));
+            sync();
+        })();
+    </script>
 </body>
 </html>

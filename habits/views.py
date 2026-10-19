@@ -1,5 +1,5 @@
+import json
 import logging
-import time
 from collections import defaultdict
 import hmac
 
@@ -7,14 +7,12 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required
-from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
-from django.contrib.auth.password_validation import validate_password
 from django.core import signing
-from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
@@ -25,26 +23,38 @@ from django_ratelimit.core import is_ratelimited
 
 
 from .models import Habit, Profile
-from .services.clockin import clock_in_url, user_for_clock_in
+from .services.accounts import create_account, user_for_login_link
+from .services.clockin import user_for_clock_in
+from .services.flags import whatsapp_signups_open
 from .services.streaks import close_day
 from .services.helpers import clean_phone_number, parse_habit, banned_check
+from .services.notify import send_reminder, send_text
 from .services.otp import (
     OTP_EXPIRY_MINUTES,
-    claim_otp_send,
-    generate_otp,
-    release_otp_send,
-    send_otp,
-    store_otp,
+    issue_otp,
     verify_otp as verify_otp_code,
 )
-from .services.whatsapp import send_whatsapp_message
+from .services.telegram import bot_link, telegram_enabled
+from .services.telegram_bot import handle_update
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Authentication
+# Sign up
 # ---------------------------------------------------------------------------
+
+
+def render_index(request, status=200):
+    return render(
+        request,
+        "habits/index.html",
+        {
+            "whatsapp_open": whatsapp_signups_open(),
+            "telegram_url": bot_link() if telegram_enabled() else "",
+        },
+        status=status,
+    )
 
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
@@ -53,16 +63,19 @@ def index(request):
         return redirect("habit_list")
 
     if request.method != "POST":
-        return render(request, "habits/index.html")
+        return render_index(request)
 
-    raw_phone = request.POST.get("identifier", "").strip()
-    clean_number = clean_phone_number(raw_phone)
+    if not whatsapp_signups_open():
+        messages.error(request, "WhatsApp signups are full right now. Start on Telegram instead.")
+        return render_index(request)
+
+    clean_number = clean_phone_number(request.POST.get("identifier", "").strip())
     if not clean_number:
         messages.error(
             request,
             "Phone number is invalid. Please remove the '0' before your number (e.g. 8123 not 08123).",
         )
-        return render(request, "habits/index.html")
+        return render_index(request)
 
     if is_ratelimited(
         request,
@@ -75,23 +88,12 @@ def index(request):
         messages.error(
             request, "Too many attempts for this number. Please try again later."
         )
-        return render(request, "habits/index.html")
-
-    password = request.POST.get("password", "")
-    if not password:
-        messages.error(request, "A password is required.")
-        return render(request, "habits/index.html")
-
-    try:
-        validate_password(password, user=None)
-    except ValidationError as exc:
-        messages.error(request, " ".join(exc.messages))
-        return render(request, "habits/index.html")
+        return render_index(request)
 
     habit_name, category = parse_habit(request.POST)
     if not habit_name:
         messages.error(request, "Please select a valid habit.")
-        return render(request, "habits/index.html")
+        return render_index(request)
 
     if User.objects.filter(username=clean_number).exists():
         messages.info(
@@ -101,30 +103,23 @@ def index(request):
 
     request.session["pending_registration"] = {
         "phone": clean_number,
-        # Sessions are stored in the DB, so never keep the raw password there.
-        "password_hash": make_password(password),
         "habit_name": habit_name,
         "category": category,
     }
     request.session.modified = True
     request.session.save()
 
-    if not claim_otp_send(clean_number):
-        # A code went out moments ago, usually from a double tap. Reuse it.
-        return redirect("verify_otp")
-
-    otp = generate_otp()
-    sent, _ = send_otp(clean_number, otp)
-
-    if not sent:
-        release_otp_send(clean_number)
-        messages.error(
-            request,
-            "We couldn't reach that number on WhatsApp. Please try again.",
-        )
-        return render(request, "habits/index.html")
-
-    store_otp(clean_number, otp)
+    if issue_otp(clean_number) == "failed":
+        if not whatsapp_signups_open():
+            messages.error(
+                request,
+                "WhatsApp signups just filled up. Start on Telegram instead: it's one tap.",
+            )
+        else:
+            messages.error(
+                request, "We couldn't reach that number on WhatsApp. Please try again."
+            )
+        return render_index(request)
 
     return redirect("verify_otp")
 
@@ -134,11 +129,19 @@ def index(request):
 VERIFY_PHONE_SALT = "habits.verify_otp.phone"
 
 
-def render_verify(request, pending):
+def render_verify(request, pending, purpose="signup"):
     # The signed phone lets a duplicate submit (double tap, slow network) that
     # arrives after login has rotated the session recognise the finished signup.
     signed_phone = signing.dumps(pending["phone"], salt=VERIFY_PHONE_SALT)
-    return render(request, "habits/verify_otp.html", {"signed_phone": signed_phone})
+    return render(
+        request,
+        "habits/verify_otp.html",
+        {
+            "signed_phone": signed_phone,
+            "form_action": reverse("verify_otp" if purpose == "signup" else "login_verify"),
+            "button_label": "Verify & Create Account" if purpose == "signup" else "Log In",
+        },
+    )
 
 
 def already_verified_phone(request):
@@ -167,10 +170,6 @@ def verify_otp_view(request):
         return redirect("login")
 
     if not pending:
-        logger.error(
-            "No pending_registration in session. Session contents: %s",
-            dict(request.session),
-        )
         messages.error(request, "Session expired. Please register again.")
         return redirect("index")
 
@@ -192,11 +191,6 @@ def verify_otp_view(request):
         return render_verify(request, pending)
 
     phone = pending["phone"]
-    # Sessions created before the switch to hashing still hold the raw password.
-    password_hash = pending.get("password_hash") or make_password(pending["password"])
-    habit_name = pending["habit_name"]
-    category = pending["category"]
-
     request.session.pop("pending_registration", None)
     request.session.save()
 
@@ -207,22 +201,9 @@ def verify_otp_view(request):
         return redirect("login")
 
     try:
-        with transaction.atomic():
-            user = User.objects.create(
-                username=phone,
-                password=password_hash,
-            )
-            Profile.objects.create(
-                user=user,
-                phone_number=phone,
-                is_whatsapp_verified=True,
-            )
-            Habit.objects.create(
-                user=user,
-                name=habit_name,
-                category=category,
-            )
-
+        user = create_account(
+            habit_name=pending["habit_name"], category=pending["category"], phone=phone
+        )
     except IntegrityError:
         logger.warning(
             "IntegrityError on account creation for %s — possible race", phone
@@ -241,10 +222,11 @@ def verify_otp_view(request):
     login(request, user, backend="django.contrib.auth.backends.ModelBackend")
 
     try:
-        send_whatsapp_message(
-            phone,
-            "Welcome to DearSelf. I will remind you 3 times a day. "
-            "If you miss 3 days streak you are out. Be warned.",
+        send_text(
+            user,
+            "Welcome to DearSelf. I will remind you 3 times a day; tap the link "
+            "in each reminder to clock in. Miss 3 days in a row and you are out. "
+            "Be warned.",
         )
     except Exception as e:
         logger.warning("Welcome message failed for %s: %s", phone[:4], e)
@@ -257,29 +239,24 @@ def verify_otp_view(request):
 
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 def resend_otp(request):
-    pending = request.session.get("pending_registration")
+    pending = request.session.get("pending_login") or request.session.get(
+        "pending_registration"
+    )
     if not pending:
-        messages.error(request, "Session expired. Please register again.")
+        messages.error(request, "Session expired. Please start again.")
         return redirect("index")
+    back = "login_verify" if request.session.get("pending_login") else "verify_otp"
 
-    if not claim_otp_send(pending["phone"]):
+    result = issue_otp(pending["phone"])
+    if result == "cooldown":
         messages.info(
             request, "We just sent you a code. Give it a few seconds to arrive."
         )
-        return redirect("verify_otp")
-
-    otp = generate_otp()
-    sent, _ = send_otp(pending["phone"], otp)
-
-    if not sent:
-        release_otp_send(pending["phone"])
+    elif result == "failed":
         messages.error(request, "Failed to resend. Please try again.")
-        return redirect("verify_otp")
-
-    store_otp(pending["phone"], otp)
-    messages.success(request, "A new code has been sent to your WhatsApp.")
-
-    return redirect("verify_otp")
+    else:
+        messages.success(request, "A new code has been sent to your WhatsApp.")
+    return redirect(back)
 
 
 # ---------------------------------------------------------------------------
@@ -287,49 +264,130 @@ def resend_otp(request):
 # ---------------------------------------------------------------------------
 
 
+def render_login(request):
+    return render(
+        request,
+        "habits/login.html",
+        {"telegram_url": bot_link() if telegram_enabled() else ""},
+    )
+
+
 @ratelimit(key="ip", rate="10/m", method="POST", block=True)
 def login_view(request):
     if request.user.is_authenticated:
         return redirect("habit_list")
 
-    if request.method == "POST":
-        raw_phone = request.POST.get("identifier", "").strip()
-        password = request.POST.get("password", "")
+    if request.method != "POST":
+        return render_login(request)
 
-        clean_number = clean_phone_number(raw_phone)
-        if not clean_number:
-            messages.error(request, "That phone number is not valid.")
-            return render(request, "habits/login.html")
+    clean_number = clean_phone_number(request.POST.get("identifier", "").strip())
+    password = request.POST.get("password", "")
+    if not clean_number:
+        messages.error(request, "That phone number is not valid.")
+        return render_login(request)
 
-        if is_ratelimited(
+    if is_ratelimited(
+        request,
+        group="login_user",
+        key=lambda g, r: clean_number,
+        rate="10/h",
+        method="POST",
+        increment=True,
+    ):
+        messages.error(
             request,
-            group="login_user",
-            key=lambda g, r: clean_number,
-            rate="10/h",
-            method="POST",
-            increment=True,
-        ):
-            messages.error(
-                request,
-                "Too many failed login attempts for this number. Try again in an hour.",
-            )
-            return render(request, "habits/login.html")
+            "Too many login attempts for this number. Try again in an hour.",
+        )
+        return render_login(request)
 
-        try:
-            existing = User.objects.get(username=clean_number)
-            if not existing.is_active:
-                return redirect("banned")
-        except User.DoesNotExist:
-            pass
+    existing = User.objects.filter(username=clean_number).first()
+    if existing is not None and not existing.is_active:
+        return redirect("banned")
 
+    if password:
+        # Accounts created before codes replaced passwords can still use them.
         user = authenticate(request, username=clean_number, password=password)
-        if user is not None:
-            login(request, user, backend="django.contrib.auth.backends.ModelBackend")
-            return redirect("habit_list")
-        else:
+        if user is None:
             messages.error(request, "Invalid number or password.")
+            return render_login(request)
+        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        return redirect("habit_list")
 
-    return render(request, "habits/login.html")
+    if existing is None:
+        messages.error(request, "No account uses that number yet. Sign up first.")
+        return render_login(request)
+
+    request.session["pending_login"] = {"phone": clean_number}
+    request.session.modified = True
+    request.session.save()
+
+    if issue_otp(clean_number) == "failed":
+        messages.error(request, "We couldn't send your code. Please try again.")
+        return render_login(request)
+    return redirect("login_verify")
+
+
+@ratelimit(key="ip", rate="5/m", method="POST", block=True)
+def login_verify(request):
+    if request.user.is_authenticated:
+        return redirect("habit_list")
+
+    pending = request.session.get("pending_login")
+    if not pending:
+        messages.error(request, "Session expired. Please log in again.")
+        return redirect("login")
+
+    if request.method != "POST":
+        return render_verify(request, pending, purpose="login")
+
+    valid, msg = verify_otp_code(pending["phone"], request.POST.get("otp", "").strip())
+    if not valid:
+        messages.error(request, msg)
+        return render_verify(request, pending, purpose="login")
+
+    request.session.pop("pending_login", None)
+    user = User.objects.filter(username=pending["phone"], is_active=True).first()
+    if user is None:
+        return redirect("banned")
+    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    return redirect("habit_list")
+
+
+@ratelimit(key="ip", rate="10/m", block=True)
+def login_link_view(request, token):
+    # GET shows a button and POST logs in, so link previews can't use up the link.
+    user = user_for_login_link(token)
+    if user is None:
+        messages.error(request, "That login link has expired. Send /dashboard to the bot for a new one.")
+        return redirect("login")
+    if request.method == "POST":
+        login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+        return redirect("habit_list")
+    return render(request, "habits/login_link.html")
+
+
+# ---------------------------------------------------------------------------
+# Telegram webhook
+# ---------------------------------------------------------------------------
+
+
+@csrf_exempt
+@require_POST
+def telegram_webhook(request):
+    secret = settings.TELEGRAM_WEBHOOK_SECRET
+    sent = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not secret or not hmac.compare_digest(sent, secret):
+        return HttpResponseForbidden()
+    try:
+        update = json.loads(request.body)
+    except ValueError:
+        return HttpResponse(status=400)
+    try:
+        handle_update(update)
+    except Exception:
+        # Always answer 200: Telegram retries failed updates, which would repeat them.
+        logger.exception("Telegram update failed: %s", update.get("update_id"))
+    return HttpResponse("ok")
 
 
 # ---------------------------------------------------------------------------
@@ -556,12 +614,6 @@ def maintenance_trigger(request):
             user_habits[habit.user].append(habit)
         return user_habits
 
-    def habit_lines(habits):
-        return "\n".join(
-            f"• {h.name}: {h.current_streak} day streak | {h.missed_count}/3 misses"
-            for h in habits
-        )
-
     if task == "send_nudges":
         hour = now.hour
         if 5 <= hour <= 11:
@@ -579,14 +631,8 @@ def maintenance_trigger(request):
                 skipped += 1
                 continue
             try:
-                wa_message = (
-                    f"*{task_type}*\n\n"
-                    f"{habit_lines(habits)}\n\n"
-                    f"{pick_nudge(user.id)}\n\n"
-                    f"Tap to clock in:\n{clock_in_url(user)}"
-                )
-                send_whatsapp_message(user.profile.phone_number, wa_message)
-                sent += 1
+                if send_reminder(user, f"*{task_type}*", habits, pick_nudge(user.id)):
+                    sent += 1
             except Exception as e:
                 logger.error("Send failed for user %s: %s", user.username, e)
 
@@ -600,19 +646,15 @@ def maintenance_trigger(request):
         user_habits = active_habits_by_user()
         sent = 0
         for user, habits in user_habits.items():
-            pending = [h for h in habits if not h.marked_today]
-            if not pending:
+            if all(h.marked_today for h in habits):
                 continue
             try:
-                wa_message = (
-                    "*NIGHT WATCH*\n\n"
-                    f"{habit_lines(habits)}\n\n"
+                note = (
                     "You haven't clocked in today. You have until 6am "
-                    "or it counts as a miss.\n\n"
-                    f"Tap to clock in:\n{clock_in_url(user)}"
+                    "or it counts as a miss."
                 )
-                send_whatsapp_message(user.profile.phone_number, wa_message)
-                sent += 1
+                if send_reminder(user, "*NIGHT WATCH*", habits, note):
+                    sent += 1
             except Exception as e:
                 logger.error("Night send failed for user %s: %s", user.username, e)
 
@@ -622,9 +664,9 @@ def maintenance_trigger(request):
         result = close_day()
         for user in result["banned"]:
             try:
-                send_whatsapp_message(
-                    user.profile.phone_number,
-                    "*YOU'RE OUT*\n\nThat's 3 misses. I warned you. "
+                send_text(
+                    user,
+                    "*YOU'RE OUT*\n\nThat's 3 misses in a row. I warned you. "
                     "Your DearSelf account is now closed.",
                 )
             except Exception as e:

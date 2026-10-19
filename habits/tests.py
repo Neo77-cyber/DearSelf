@@ -578,7 +578,7 @@ class RegressionTests(TestCase):
                     name, f"'{key}' is not parseable — template option value mismatch"
                 )
 
-    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
     @patch("habits.views.is_ratelimited", return_value=False)
     def test_session_survives_registration_redirect(self, mock_rl, mock_send):
 
@@ -631,26 +631,18 @@ class IndexViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "invalid")
 
-    def test_missing_password_shows_error(self):
-        response = self._post(password="")
-        self.assertEqual(response.status_code, 200)
-
-    def test_weak_password_shows_error(self):
-        response = self._post(password="123")
-        self.assertEqual(response.status_code, 200)
-
     def test_invalid_habit_choice_shows_error(self):
         response = self._post(habit_choice="NONEXISTENT")
         self.assertEqual(response.status_code, 200)
 
     def test_existing_user_redirects_to_login(self):
         make_user(phone=CLEAN_PHONE)
-        with patch("habits.views.send_otp", return_value=(True, "whatsapp")):
+        with patch("habits.services.otp.send_otp", return_value=(True, "whatsapp")):
             response = self._post()
         self.assertRedirects(response, reverse("login"))
 
-    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
-    @patch("habits.views.store_otp")
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.services.otp.store_otp")
     @patch("habits.views.is_ratelimited", return_value=False)
     def test_successful_registration_redirects_to_verify(
         self, mock_rl, mock_store, mock_send
@@ -658,8 +650,8 @@ class IndexViewTests(TestCase):
         response = self._post()
         self.assertRedirects(response, reverse("verify_otp"))
 
-    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
-    @patch("habits.views.store_otp")
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.services.otp.store_otp")
     @patch("habits.views.is_ratelimited", return_value=False)
     def test_pending_registration_stored_in_session(
         self, mock_rl, mock_store, mock_send
@@ -669,7 +661,7 @@ class IndexViewTests(TestCase):
         self.assertIsNotNone(pending)
         self.assertEqual(pending["phone"], CLEAN_PHONE)
 
-    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
     @patch("habits.views.is_ratelimited", return_value=False)
     def test_double_tap_register_sends_one_code(self, mock_rl, mock_send):
         first = self._post()
@@ -677,7 +669,7 @@ class IndexViewTests(TestCase):
         self.assertEqual(mock_send.call_count, 1)
         self.assertRedirects(second, reverse("verify_otp"))
 
-    @patch("habits.views.send_otp", return_value=(False, None))
+    @patch("habits.services.otp.send_otp", return_value=(False, None))
     def test_send_otp_failure_shows_error(self, mock_send):
         response = self._post()
         self.assertEqual(response.status_code, 200)
@@ -722,30 +714,30 @@ class VerifyOTPViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Wrong")
 
-    @patch("habits.views.send_whatsapp_message")
+    @patch("habits.services.notify.send_whatsapp_message")
     def test_correct_otp_creates_user_and_redirects(self, mock_wa):
         response = self.client.post(self.url, {"otp": self.otp})
         self.assertRedirects(response, reverse("habit_list"))
         self.assertTrue(User.objects.filter(username=CLEAN_PHONE).exists())
 
-    @patch("habits.views.send_whatsapp_message")
+    @patch("habits.services.notify.send_whatsapp_message")
     def test_correct_otp_creates_profile(self, mock_wa):
         self.client.post(self.url, {"otp": self.otp})
         self.assertTrue(Profile.objects.filter(phone_number=CLEAN_PHONE).exists())
 
-    @patch("habits.views.send_whatsapp_message")
+    @patch("habits.services.notify.send_whatsapp_message")
     def test_correct_otp_creates_habit(self, mock_wa):
         self.client.post(self.url, {"otp": self.otp})
         user = User.objects.get(username=CLEAN_PHONE)
         self.assertTrue(Habit.objects.filter(user=user).exists())
 
-    @patch("habits.views.send_whatsapp_message")
+    @patch("habits.services.notify.send_whatsapp_message")
     def test_correct_otp_logs_user_in(self, mock_wa):
         self.client.post(self.url, {"otp": self.otp})
         response = self.client.get(reverse("habit_list"))
         self.assertEqual(response.status_code, 200)
 
-    @patch("habits.views.send_whatsapp_message")
+    @patch("habits.services.notify.send_whatsapp_message")
     def test_duplicate_account_redirects_to_login(self, mock_wa):
         make_user(phone=CLEAN_PHONE)
         response = self.client.post(self.url, {"otp": self.otp})
@@ -755,18 +747,13 @@ class VerifyOTPViewTests(TestCase):
         response = self.client.post(self.url, {"otp": ""})
         self.assertEqual(response.status_code, 200)
 
-    @patch("habits.views.send_whatsapp_message")
-    def test_new_user_can_log_in_with_registered_password(self, mock_wa):
-        self.client.post(self.url, {"otp": self.otp})
-        self.assertTrue(User.objects.get(username=CLEAN_PHONE).check_password(VALID_PASS))
-
     def _signed_phone(self):
         import re
 
         page = self.client.get(self.url).content.decode()
         return re.search(r'name="signed_phone" value="([^"]+)"', page).group(1)
 
-    @patch("habits.views.send_whatsapp_message")
+    @patch("habits.services.notify.send_whatsapp_message")
     def test_double_submit_lands_on_login_not_error(self, mock_wa):
         from django.conf import settings
 
@@ -811,13 +798,13 @@ class ResendOTPViewTests(TestCase):
         }
         session.save()
 
-    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
-    @patch("habits.views.store_otp")
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.services.otp.store_otp")
     def test_resend_success_redirects_to_verify(self, mock_store, mock_send):
         response = self.client.post(self.url)
         self.assertRedirects(response, reverse("verify_otp"))
 
-    @patch("habits.views.send_otp", return_value=(False, None))
+    @patch("habits.services.otp.send_otp", return_value=(False, None))
     def test_resend_failure_shows_error(self, mock_send):
         response = self.client.post(self.url)
         self.assertRedirects(response, reverse("verify_otp"))
@@ -827,7 +814,7 @@ class ResendOTPViewTests(TestCase):
         response = self.client.post(self.url)
         self.assertRedirects(response, reverse("index"))
 
-    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
     def test_second_resend_within_cooldown_does_not_send(self, mock_send):
         self.client.post(self.url)
         self.client.post(self.url)
@@ -1185,13 +1172,13 @@ class MaintenanceTriggerTests(TestCase):
 
     # --- send_nudges ---
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_send_nudges_returns_200(self, mock_wa):
         response = self._post("send_nudges")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Sent", response.content.decode())
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_send_nudges_uses_fallback_nudge(self, mock_wa):
 
         response = self._post("send_nudges")
@@ -1215,25 +1202,25 @@ class MaintenanceTriggerTests(TestCase):
 
     # --- night_watch ---
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_night_watch_returns_200(self, mock_wa):
         response = self._post("night_watch")
         self.assertEqual(response.status_code, 200)
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_night_watch_only_warns_and_never_records_misses(self, mock_wa):
         self._post("night_watch")
         self.habit.refresh_from_db()
         self.assertEqual(self.habit.missed_count, 0)
         self.assertIn("until 6am", mock_wa.call_args[0][1])
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_night_watch_skips_users_already_clocked_in(self, mock_wa):
         self.habit.mark_done()
         self._post("night_watch")
         mock_wa.assert_not_called()
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_send_nudges_skips_users_already_clocked_in(self, mock_wa):
         self.habit.mark_done()
         response = self._post("send_nudges")
@@ -1247,7 +1234,7 @@ class MaintenanceTriggerTests(TestCase):
             created_at=timezone.now() - timedelta(days=days)
         )
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_close_day_records_miss(self, mock_wa):
         self._age_habit()
         self._post("close_day")
@@ -1255,7 +1242,7 @@ class MaintenanceTriggerTests(TestCase):
         self.assertEqual(self.habit.missed_count, 1)
         self.assertEqual(self.habit.current_streak, 0)
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_close_day_twice_counts_one_miss(self, mock_wa):
         # GitHub Actions can retry or be re-run by hand.
         self._age_habit()
@@ -1264,7 +1251,7 @@ class MaintenanceTriggerTests(TestCase):
         self.habit.refresh_from_db()
         self.assertEqual(self.habit.missed_count, 1)
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_close_day_counts_users_who_never_clocked_in(self, mock_wa):
         self._age_habit()
         self.assertIsNone(self.habit.last_marked_date)
@@ -1272,13 +1259,13 @@ class MaintenanceTriggerTests(TestCase):
         self.habit.refresh_from_db()
         self.assertEqual(self.habit.missed_count, 1)
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_close_day_does_not_punish_signup_day(self, mock_wa):
         self._post("close_day")
         self.habit.refresh_from_db()
         self.assertEqual(self.habit.missed_count, 0)
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_close_day_spares_habit_done_yesterday(self, mock_wa):
         from .models import DailyRecord, get_logical_date
 
@@ -1290,7 +1277,7 @@ class MaintenanceTriggerTests(TestCase):
         self.habit.refresh_from_db()
         self.assertEqual(self.habit.missed_count, 0)
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_close_day_third_miss_bans_and_notifies(self, mock_wa):
         self._age_habit()
         Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
@@ -1299,7 +1286,7 @@ class MaintenanceTriggerTests(TestCase):
         self.assertFalse(self.user.is_active)
         self.assertIn("3 misses", mock_wa.call_args[0][1])
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_clocking_in_resets_misses(self, mock_wa):
         # Misses count in a row: 2 misses, a clock-in, then a miss is 1, not 3.
         self._age_habit()
@@ -1329,7 +1316,7 @@ class MaintenanceTriggerTests(TestCase):
 
     # --- key via header ---
 
-    @patch("habits.views.send_whatsapp_message", return_value=True)
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_key_via_header_accepted(self, mock_wa):
         response = self.client.post(
             f"{self.url}?task=send_nudges",
@@ -1398,6 +1385,212 @@ class ClockInLinkTests(TestCase):
         self.assertRedirects(response, reverse("banned"), target_status_code=403)
 
 
+@override_settings(RATELIMIT_ENABLE=False)
+class LowFrictionSignupTests(TestCase):
+    def _post(self):
+        return self.client.post(
+            reverse("index"),
+            {"identifier": CLEAN_PHONE, "habit_choice": Habit.HABIT_CHOICES[0][0]},
+        )
+
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
+    def test_signup_needs_no_password(self, mock_send):
+        self.assertRedirects(self._post(), reverse("verify_otp"))
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_new_account_has_no_usable_password(self, mock_wa):
+        from .services.accounts import create_account
+
+        user = create_account(habit_name="Work Out", category="WORK OUT", phone=CLEAN_PHONE)
+        self.assertFalse(user.has_usable_password())
+
+    def test_whatsapp_full_hides_form_and_rejects_posts(self):
+        from .services.flags import mark_whatsapp_full
+
+        mark_whatsapp_full()
+        page = self.client.get(reverse("index"))
+        self.assertNotContains(page, 'name="identifier"')
+        with patch("habits.services.otp.send_otp") as mock_send:
+            self._post()
+            mock_send.assert_not_called()
+
+    @override_settings(TELEGRAM_BOT_TOKEN="t", TELEGRAM_BOT_USERNAME="DearSelfBot")
+    def test_whatsapp_full_shows_telegram_button(self):
+        from .services.flags import mark_whatsapp_full
+
+        mark_whatsapp_full()
+        self.assertContains(self.client.get(reverse("index")), "https://t.me/DearSelfBot")
+
+    @override_settings(WHATSAPP_DRY_RUN=False)
+    @patch("habits.services.whatsapp.requests.post")
+    def test_green_api_466_closes_whatsapp_signups(self, mock_post):
+        from .services.flags import whatsapp_signups_open
+
+        mock_post.return_value = MagicMock(status_code=466, json=lambda: {})
+        response = self._post()
+        self.assertFalse(whatsapp_signups_open())
+        self.assertContains(response, "Telegram")
+
+    @override_settings(WHATSAPP_DRY_RUN=False)
+    @patch("habits.services.whatsapp.requests.post")
+    def test_466_does_not_block_existing_chats(self, mock_post):
+        from .services.whatsapp import is_whatsapp_quota_exceeded, send_whatsapp_message
+
+        mock_post.return_value = MagicMock(status_code=466, json=lambda: {})
+        send_whatsapp_message(CLEAN_PHONE, "hi")
+        self.assertFalse(is_whatsapp_quota_exceeded())
+
+
+@override_settings(RATELIMIT_ENABLE=False)
+class CodeLoginTests(TestCase):
+    def setUp(self):
+        self.user = make_user(phone=CLEAN_PHONE)
+
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
+    def test_login_with_code(self, mock_send):
+        from .services.otp import store_otp
+
+        response = self.client.post(reverse("login"), {"identifier": CLEAN_PHONE})
+        self.assertRedirects(response, reverse("login_verify"))
+        store_otp(CLEAN_PHONE, "123456")
+        response = self.client.post(reverse("login_verify"), {"otp": "123456"})
+        self.assertRedirects(response, reverse("habit_list"))
+
+    def test_wrong_code_does_not_log_in(self):
+        from .services.otp import store_otp
+
+        session = self.client.session
+        session["pending_login"] = {"phone": CLEAN_PHONE}
+        session.save()
+        store_otp(CLEAN_PHONE, "123456")
+        self.client.post(reverse("login_verify"), {"otp": "000000"})
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
+    def test_unknown_number_gets_no_code(self, mock_send):
+        response = self.client.post(reverse("login"), {"identifier": "2348000000009"})
+        self.assertContains(response, "Sign up first")
+        mock_send.assert_not_called()
+
+
+class LoginLinkTests(TestCase):
+    def setUp(self):
+        from .services.accounts import login_link
+
+        self.user = make_user()
+        self.url = login_link(self.user).replace("https://dear-self.onrender.com", "")
+
+    def test_opening_link_does_not_log_in(self):
+        self.client.get(self.url)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_button_logs_in(self):
+        self.assertRedirects(self.client.post(self.url), reverse("habit_list"))
+
+    def test_link_works_once(self):
+        self.client.post(self.url)
+        self.client.logout()
+        self.assertRedirects(self.client.post(self.url), reverse("login"))
+
+
+@override_settings(TELEGRAM_BOT_TOKEN="t", TELEGRAM_BOT_USERNAME="DearSelfBot", TELEGRAM_WEBHOOK_SECRET="s3cret")
+class TelegramBotTests(TestCase):
+    CHAT = 555001
+
+    def setUp(self):
+        patcher = patch("habits.services.telegram.call", return_value={})
+        self.call = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _send(self, update, secret="s3cret"):
+        return self.client.post(
+            reverse("telegram_webhook"),
+            data=json.dumps(update),
+            content_type="application/json",
+            HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN=secret,
+        )
+
+    def _text(self, text):
+        return self._send({"update_id": 1, "message": {"chat": {"id": self.CHAT, "type": "private"}, "text": text}})
+
+    def _button(self, data, message_id=10):
+        return self._send({"update_id": 2, "callback_query": {"id": "cb", "data": data, "message": {"message_id": message_id, "chat": {"id": self.CHAT}}}})
+
+    def _sent_texts(self):
+        return [c.kwargs.get("text", "") for c in self.call.call_args_list if c.args[0] == "sendMessage"]
+
+    def _user(self):
+        return Profile.objects.get(telegram_chat_id=self.CHAT).user
+
+    def test_wrong_secret_rejected(self):
+        self.assertEqual(self._send({}, secret="nope").status_code, 403)
+
+    def test_start_with_habit_signs_up_in_one_tap(self):
+        self._text("/start WORK_OUT")
+        user = self._user()
+        self.assertEqual(list(user.habits.values_list("name", flat=True)), ["Work Out"])
+        self.assertFalse(user.has_usable_password())
+        self.assertTrue(any("Welcome" in t for t in self._sent_texts()))
+
+    def test_start_twice_does_not_duplicate(self):
+        self._text("/start WORK_OUT")
+        self._text("/start WORK_OUT")
+        self.assertEqual(Profile.objects.filter(telegram_chat_id=self.CHAT).count(), 1)
+
+    def test_start_without_habit_asks_then_button_signs_up(self):
+        self._text("/start")
+        self.assertFalse(Profile.objects.filter(telegram_chat_id=self.CHAT).exists())
+        self.assertIn("Which habit", self._sent_texts()[-1])
+        self._button("pick:ALCOHOL_SOBER")
+        self.assertEqual(self._user().habits.get().name, "Alcohol Sober")
+
+    def test_done_button_clocks_in(self):
+        self._text("/start WORK_OUT")
+        habit = self._user().habits.get()
+        self._button(f"done:{habit.id}")
+        habit.refresh_from_db()
+        self.assertEqual(habit.current_streak, 1)
+        self.assertTrue(any("1 day streak" in t for t in self._sent_texts()))
+
+    def test_done_button_cannot_touch_other_users_habit(self):
+        self._text("/start WORK_OUT")
+        other = make_habit(make_user(phone="2348000000002"))
+        self._button(f"done:{other.id}")
+        other.refresh_from_db()
+        self.assertEqual(other.current_streak, 0)
+
+    def test_done_command_clocks_in_everything(self):
+        self._text("/start WORK_OUT")
+        self._text("/done")
+        self.assertEqual(self._user().habits.get().current_streak, 1)
+
+    def test_banned_user_is_told_they_are_out(self):
+        self._text("/start WORK_OUT")
+        user = self._user()
+        user.is_active = False
+        user.save()
+        self._text("/done")
+        self.assertIn("you're out", self._sent_texts()[-1])
+        self.assertEqual(user.habits.get().current_streak, 0)
+
+    def test_dashboard_sends_login_link(self):
+        self._text("/start WORK_OUT")
+        self._text("/dashboard")
+        self.assertIn("/login/link/", self._sent_texts()[-1])
+
+    def test_reminder_uses_buttons_not_links(self):
+        from .services.notify import send_reminder
+
+        self._text("/start WORK_OUT")
+        user = self._user()
+        self.call.reset_mock()
+        send_reminder(user, "*MORNING GINGER*", list(user.habits.all()), "Go.")
+        kwargs = self.call.call_args.kwargs
+        self.assertNotIn("*", kwargs["text"])
+        self.assertNotIn("/c/", kwargs["text"])
+        self.assertIn("done:", json.dumps(kwargs["reply_markup"]))
+
+
 class HealthCheckTests(TestCase):
 
     def test_returns_200_ok(self):
@@ -1444,7 +1637,7 @@ class SecurityTests(TestCase):
         stored = PhoneOTP.objects.get(phone_number=CLEAN_PHONE).otp_hash
         self.assertNotEqual(stored, "123456")
 
-    @patch("habits.views.send_otp", return_value=(True, "whatsapp"))
+    @patch("habits.services.otp.send_otp", return_value=(True, "whatsapp"))
     def test_registration_never_puts_raw_password_in_session(self, mock_send):
         self.client.post(
             reverse("index"),

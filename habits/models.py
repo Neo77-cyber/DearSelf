@@ -20,9 +20,11 @@ class Profile(models.Model):
         message="Phone number must be entered in the format: '2348123456789'.",
     )
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
+    # Telegram signups have no phone number; WhatsApp signups have no chat id.
     phone_number = models.CharField(
-        validators=[phone_regex], max_length=13, unique=True
+        validators=[phone_regex], max_length=13, unique=True, null=True, blank=True
     )
+    telegram_chat_id = models.BigIntegerField(unique=True, null=True, blank=True)
     user_email = models.EmailField(unique=True, blank=True, null=True)
     timezone = models.CharField(max_length=50, default="Africa/Lagos")
     is_whatsapp_verified = models.BooleanField(default=False)
@@ -166,3 +168,13 @@ class PhoneOTP(models.Model):
 
     def __str__(self):
         return f"OTP for {self.phone_number}"
+
+
+class ServiceFlag(models.Model):
+    # Small persistent switches shared by every worker, e.g. "WhatsApp can't
+    # take new chats until <date>".
+    name = models.CharField(max_length=50, unique=True)
+    active_until = models.DateTimeField()
+
+    def __str__(self):
+        return f"{self.name} until {self.active_until}"

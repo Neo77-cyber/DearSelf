@@ -1,0 +1,27 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>DearSelf | Log In</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" type="image/png" href="{% static 'favicon.png' %}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>body { background-color: #000; font-family: 'Inter', sans-serif; color: white; }</style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-6">
+    <div class="w-full max-w-md text-center">
+        <div class="mb-8 flex justify-center">
+            <img src="{% static 'logo.png' %}" class="w-12 h-12" alt="Logo">
+        </div>
+        <h1 class="text-3xl font-extrabold tracking-tight mb-3">Open your dashboard</h1>
+        <p class="text-gray-500 text-sm mb-8">This link works once.</p>
+        <form method="post">
+            {% csrf_token %}
+            <button type="submit" class="w-full bg-violet-600 hover:bg-violet-700 py-4 rounded-2xl font-bold uppercase tracking-widest text-xs">Continue</button>
+        </form>
+    </div>
+</body>
+</html>

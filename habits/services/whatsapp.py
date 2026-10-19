@@ -52,6 +52,14 @@ def send_whatsapp_message(phone_number: str, message: str) -> bool:
         if response.status_code == 200:
             return True
 
+        if response.status_code == 466:
+            # Chat limit for the plan: existing chats still work, new numbers don't.
+            from .flags import mark_whatsapp_full
+
+            mark_whatsapp_full()
+            logger.error("Green API chat quota reached: %s", data)
+            return False
+
         if response.status_code in (429, 403):
             mark_whatsapp_quota_exceeded()
             logger.error("Green API quota error %s: %s", response.status_code, data)

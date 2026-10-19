@@ -63,6 +63,20 @@ def release_otp_send(phone_number: str):
     )
 
 
+def issue_otp(phone_number: str) -> str:
+    """Send a fresh code unless one just went out. Returns "sent",
+    "cooldown" (a double tap: reuse the code already sent) or "failed"."""
+    if not claim_otp_send(phone_number):
+        return "cooldown"
+    otp = generate_otp()
+    sent, _ = send_otp(phone_number, otp)
+    if not sent:
+        release_otp_send(phone_number)
+        return "failed"
+    store_otp(phone_number, otp)
+    return "sent"
+
+
 def store_otp(phone_number: str, otp: str):
     now = timezone.now()
     PhoneOTP.objects.update_or_create(
