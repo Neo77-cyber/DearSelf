@@ -1215,6 +1215,15 @@ class MaintenanceTriggerTests(TestCase):
         self.assertIn("until 6am", mock_wa.call_args[0][1])
 
     @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_night_watch_names_only_the_habits_still_pending(self, mock_wa):
+        make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
+        make_habit(self.user, name="Rubbish", category="CUSTOM")
+        self.habit.mark_done()
+        self._post("night_watch")
+        message = mock_wa.call_args[0][1]
+        self.assertIn("You haven't clocked in for Alcohol Sober and Rubbish today.", message)
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_night_watch_skips_users_already_clocked_in(self, mock_wa):
         self.habit.mark_done()
         self._post("night_watch")

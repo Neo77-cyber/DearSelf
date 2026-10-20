@@ -666,11 +666,16 @@ def maintenance_trigger(request):
         for user, habits in user_habits.items():
             if all(h.marked_today for h in habits):
                 continue
+            pending = [h.name for h in habits if not h.marked_today]
+            if len(pending) > 1:
+                pending_names = ", ".join(pending[:-1]) + " and " + pending[-1]
+            else:
+                pending_names = pending[0]
             try:
                 note = (
                     f"{pick_nudge(user.id)}\n\n"
-                    "You haven't clocked in today. You have until 6am "
-                    "or it counts as a miss."
+                    f"You haven't clocked in for {pending_names} today. "
+                    "You have until 6am or it counts as a miss."
                 )
                 if send_reminder(user, "*DAILY CHECK-IN*", habits, note):
                     sent += 1
