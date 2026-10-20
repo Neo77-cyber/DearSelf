@@ -50,7 +50,7 @@
                             <form method="post" class="clock-in-form">
                                 {% csrf_token %}
                                 <input type="hidden" name="habit_id" value="{{ habit.id }}">
-                                <button type="submit" class="bg-violet-600 hover:bg-violet-700 px-5 py-3 rounded-xl font-bold uppercase tracking-widest text-xs whitespace-nowrap">I did it</button>
+                                <button type="submit" class="bg-violet-600 hover:bg-violet-700 px-5 py-3 rounded-xl font-bold uppercase tracking-widest text-xs whitespace-nowrap">I didn't do it</button>
                             </form>
                         {% endif %}
                     </div>

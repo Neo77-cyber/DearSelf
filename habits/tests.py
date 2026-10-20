@@ -1355,7 +1355,7 @@ class ClockInLinkTests(TestCase):
         # WhatsApp prefetches links for previews; a GET must never mark a habit.
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "I did it")
+        self.assertContains(response, "I didn't do it")
         self.habit.refresh_from_db()
         self.assertEqual(self.habit.current_streak, 0)
 
