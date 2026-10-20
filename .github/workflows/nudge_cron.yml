@@ -1,7 +1,8 @@
 
 name: Scheduled Habit Jobs
 
-# The daily schedule runs on cron-job.org (06:30 close_day, 21:00 night_watch, Lagos):
+# The daily schedule runs on cron-job.org (Lagos): 06:30 close_day,
+# 08:00 send_nudges, 21:00 night_watch.
 # GitHub's scheduler ran these jobs hours late or not at all. This workflow is
 # kept for running a job by hand from the Actions tab.
 on:

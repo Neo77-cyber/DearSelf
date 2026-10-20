@@ -88,7 +88,13 @@ class Habit(models.Model):
         return self.category in self.QUIT_CATEGORIES
 
     @property
+    def is_custom_habit(self) -> bool:
+        return self.category == "CUSTOM"
+
+    @property
     def clock_in_label(self) -> str:
+        if self.is_custom_habit:
+            return "Passed"
         return "I didn't do it" if self.is_quit_habit else "I did it"
 
     @property

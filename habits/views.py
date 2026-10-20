@@ -225,9 +225,9 @@ def verify_otp_view(request):
     try:
         send_text(
             user,
-            "Welcome to DearSelf. If you haven't clocked in, I'll remind you at "
-            "9pm; tap the link to clock in. Miss 3 days in a row and you are "
-            "out. Be warned.",
+            "Welcome to DearSelf. I'll remind you at 8am, and again at 9pm if "
+            "you haven't clocked in; tap the link to clock in. Miss 3 days in "
+            "a row and you are out. Be warned.",
         )
     except Exception as e:
         logger.warning("Welcome message failed for %s: %s", phone[:4], e)
@@ -567,7 +567,7 @@ def clock_in(request, token):
     habits = list(Habit.objects.filter(user=user).order_by("id"))
     if all(h.is_quit_habit for h in habits):
         question = "Stayed off it today?"
-    elif not any(h.is_quit_habit for h in habits):
+    elif all(not h.is_quit_habit and not h.is_custom_habit for h in habits):
         question = "Did it today?"
     else:
         question = "How did today go?"
@@ -659,7 +659,7 @@ def maintenance_trigger(request):
         )
 
     if task == "night_watch":
-        # The one daily reminder (9pm), only to people still to clock in.
+        # The 9pm reminder, only to people still to clock in.
         # Misses are counted by close_day after 06:00, when the day has ended.
         user_habits = active_habits_by_user()
         sent = 0

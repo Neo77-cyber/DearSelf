@@ -17,8 +17,9 @@ PICKABLE_HABITS = {
 }
 
 WELCOME = (
-    "Welcome to DearSelf. If you haven't clocked in, I'll remind you at 9pm; "
-    "tap ✅ to clock in. Miss 3 days in a row and you're out. Be warned."
+    "Welcome to DearSelf. I'll remind you at 8am, and again at 9pm if you "
+    "haven't clocked in; tap ✅ to clock in. Miss 3 days in a row and you're "
+    "out. Be warned."
 )
 OUT = "You missed 3 days in a row, so you're out. DearSelf is closed for you."
 HELP = (

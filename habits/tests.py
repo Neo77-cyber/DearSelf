@@ -1366,6 +1366,12 @@ class ClockInLinkTests(TestCase):
         self.assertContains(response, "Stayed off it today?")
         self.assertContains(response, "I didn&#x27;t do it")
 
+    def test_custom_habit_says_passed(self):
+        Habit.objects.filter(pk=self.habit.pk).update(category="CUSTOM", name="Rubbish")
+        response = self.client.get(self.url)
+        self.assertContains(response, ">Passed<")
+        self.assertContains(response, "How did today go?")
+
     def test_mixed_habits_get_neutral_question(self):
         make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
         response = self.client.get(self.url)
@@ -1610,8 +1616,14 @@ class TelegramBotTests(TestCase):
         user = make_user(phone="2348000000003")
         quit_habit = make_habit(user, name="Alcohol Sober", category="ALCOHOL SOBER")
         build_habit = make_habit(user, name="Work Out", category="WORK OUT")
-        labels = [row[0][0] for row in done_buttons([quit_habit, build_habit])]
-        self.assertEqual(labels, ["✅ Stayed off: Alcohol Sober", "✅ Did it: Work Out"])
+        custom_habit = make_habit(user, name="Rubbish", category="CUSTOM")
+        labels = [
+            row[0][0] for row in done_buttons([quit_habit, build_habit, custom_habit])
+        ]
+        self.assertEqual(
+            labels,
+            ["✅ Stayed off: Alcohol Sober", "✅ Did it: Work Out", "✅ Passed: Rubbish"],
+        )
 
     def test_reminder_uses_buttons_not_links(self):
         from .services.notify import send_reminder

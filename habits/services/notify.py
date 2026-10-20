@@ -16,6 +16,8 @@ def habit_lines(habits) -> str:
 
 def done_buttons(habits):
     def label(h):
+        if h.is_custom_habit:
+            return f"✅ Passed: {h.name}"
         return f"✅ Stayed off: {h.name}" if h.is_quit_habit else f"✅ Did it: {h.name}"
 
     return [[(label(h), f"done:{h.id}")] for h in habits if not h.marked_today]
