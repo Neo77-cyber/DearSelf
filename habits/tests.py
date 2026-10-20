@@ -1355,9 +1355,23 @@ class ClockInLinkTests(TestCase):
         # WhatsApp prefetches links for previews; a GET must never mark a habit.
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "I didn't do it")
+        self.assertContains(response, "I did it")
+        self.assertContains(response, "Did it today?")
         self.habit.refresh_from_db()
         self.assertEqual(self.habit.current_streak, 0)
+
+    def test_quit_habit_asks_if_you_stayed_off_it(self):
+        Habit.objects.filter(pk=self.habit.pk).update(category="ALCOHOL SOBER")
+        response = self.client.get(self.url)
+        self.assertContains(response, "Stayed off it today?")
+        self.assertContains(response, "I didn&#x27;t do it")
+
+    def test_mixed_habits_get_neutral_question(self):
+        make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
+        response = self.client.get(self.url)
+        self.assertContains(response, "How did today go?")
+        self.assertContains(response, "I did it")
+        self.assertContains(response, "I didn&#x27;t do it")
 
     def test_tapping_button_clocks_in_without_login(self):
         response = self.client.post(self.url, {"habit_id": self.habit.id}, follow=True)
@@ -1589,6 +1603,15 @@ class TelegramBotTests(TestCase):
         self._text("/start WORK_OUT")
         self._text("/dashboard")
         self.assertIn("/login/link/", self._sent_texts()[-1])
+
+    def test_buttons_match_quit_or_build_habit(self):
+        from .services.notify import done_buttons
+
+        user = make_user(phone="2348000000003")
+        quit_habit = make_habit(user, name="Alcohol Sober", category="ALCOHOL SOBER")
+        build_habit = make_habit(user, name="Work Out", category="WORK OUT")
+        labels = [row[0][0] for row in done_buttons([quit_habit, build_habit])]
+        self.assertEqual(labels, ["✅ Stayed off: Alcohol Sober", "✅ Did it: Work Out"])
 
     def test_reminder_uses_buttons_not_links(self):
         from .services.notify import send_reminder

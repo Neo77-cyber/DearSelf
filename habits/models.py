@@ -74,6 +74,23 @@ class Habit(models.Model):
     def __str__(self):
         return f"{self.name} ({self.user.username})"
 
+    # Habits you're quitting: "clocking in" means you stayed off it today.
+    QUIT_CATEGORIES = {
+        "GAMBLING",
+        "WEED SOBER",
+        "LATE NIGHT EATING",
+        "BUY BUY",
+        "ALCOHOL SOBER",
+    }
+
+    @property
+    def is_quit_habit(self) -> bool:
+        return self.category in self.QUIT_CATEGORIES
+
+    @property
+    def clock_in_label(self) -> str:
+        return "I didn't do it" if self.is_quit_habit else "I did it"
+
     @property
     def marked_today(self) -> bool:
         return self.last_marked_date == get_logical_date()

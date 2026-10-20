@@ -225,9 +225,9 @@ def verify_otp_view(request):
     try:
         send_text(
             user,
-            "Welcome to DearSelf. I will remind you 3 times a day; tap the link "
-            "in each reminder to clock in. Miss 3 days in a row and you are out. "
-            "Be warned.",
+            "Welcome to DearSelf. If you haven't clocked in, I'll remind you at "
+            "9pm; tap the link to clock in. Miss 3 days in a row and you are "
+            "out. Be warned.",
         )
     except Exception as e:
         logger.warning("Welcome message failed for %s: %s", phone[:4], e)
@@ -565,10 +565,20 @@ def clock_in(request, token):
         return redirect("clock_in", token=token)
 
     habits = list(Habit.objects.filter(user=user).order_by("id"))
+    if all(h.is_quit_habit for h in habits):
+        question = "Stayed off it today?"
+    elif not any(h.is_quit_habit for h in habits):
+        question = "Did it today?"
+    else:
+        question = "How did today go?"
     return render(
         request,
         "habits/clock_in.html",
-        {"habits": habits, "all_done": all(h.marked_today for h in habits)},
+        {
+            "habits": habits,
+            "all_done": all(h.marked_today for h in habits),
+            "question": question,
+        },
     )
 
 
@@ -649,8 +659,8 @@ def maintenance_trigger(request):
         )
 
     if task == "night_watch":
-        # Evening warning only. Misses are counted by close_day after 06:00,
-        # when the logical day has actually ended.
+        # The one daily reminder (9pm), only to people still to clock in.
+        # Misses are counted by close_day after 06:00, when the day has ended.
         user_habits = active_habits_by_user()
         sent = 0
         for user, habits in user_habits.items():
@@ -658,10 +668,11 @@ def maintenance_trigger(request):
                 continue
             try:
                 note = (
+                    f"{pick_nudge(user.id)}\n\n"
                     "You haven't clocked in today. You have until 6am "
                     "or it counts as a miss."
                 )
-                if send_reminder(user, "*NIGHT WATCH*", habits, note):
+                if send_reminder(user, "*DAILY CHECK-IN*", habits, note):
                     sent += 1
             except Exception as e:
                 logger.error("Night send failed for user %s: %s", user.username, e)

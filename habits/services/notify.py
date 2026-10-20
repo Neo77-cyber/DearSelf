@@ -15,7 +15,10 @@ def habit_lines(habits) -> str:
 
 
 def done_buttons(habits):
-    return [[(f"✅ Done: {h.name}", f"done:{h.id}")] for h in habits if not h.marked_today]
+    def label(h):
+        return f"✅ Stayed off: {h.name}" if h.is_quit_habit else f"✅ Did it: {h.name}"
+
+    return [[(label(h), f"done:{h.id}")] for h in habits if not h.marked_today]
 
 
 def send_text(user, text: str) -> bool:

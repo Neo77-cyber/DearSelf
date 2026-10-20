@@ -30,7 +30,7 @@
             <p class="text-gray-500 text-sm mb-8">Clock-in links only work on the day they're sent. Use the link in today's reminder, or log in.</p>
             <a href="{% url 'login' %}" class="inline-block bg-violet-600 hover:bg-violet-700 px-8 py-4 rounded-2xl font-bold uppercase tracking-widest text-xs">Log in</a>
         {% else %}
-            <h1 class="text-3xl font-extrabold tracking-tight mb-2">{% if all_done %}All done today{% else %}Did you do it today?{% endif %}</h1>
+            <h1 class="text-3xl font-extrabold tracking-tight mb-2">{% if all_done %}All done today{% else %}{{ question }}{% endif %}</h1>
             <p class="text-gray-500 text-sm mb-8">{% if all_done %}Streaks are safe. See you tomorrow.{% else %}One tap and your streak is safe.{% endif %}</p>
 
             {% for message in messages %}
@@ -50,7 +50,7 @@
                             <form method="post" class="clock-in-form">
                                 {% csrf_token %}
                                 <input type="hidden" name="habit_id" value="{{ habit.id }}">
-                                <button type="submit" class="bg-violet-600 hover:bg-violet-700 px-5 py-3 rounded-xl font-bold uppercase tracking-widest text-xs whitespace-nowrap">I didn't do it</button>
+                                <button type="submit" class="bg-violet-600 hover:bg-violet-700 px-5 py-3 rounded-xl font-bold uppercase tracking-widest text-xs whitespace-nowrap">{{ habit.clock_in_label }}</button>
                             </form>
                         {% endif %}
                     </div>
