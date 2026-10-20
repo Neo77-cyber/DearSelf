@@ -1,14 +1,10 @@
 
 name: Scheduled Habit Jobs
 
+# The daily schedule runs on cron-job.org (06:30, 07:00, 13:00, 20:00 Lagos):
+# GitHub's scheduler ran these jobs hours late or not at all. This workflow is
+# kept for running a job by hand from the Actions tab.
 on:
-  schedule:
-    # Times are UTC. Lagos is UTC+1.
-    - cron: '30 5 * * *'  # 06:30 Lagos: close yesterday, record misses
-    - cron: '0 6 * * *'   # 07:00 Lagos: morning reminder
-    - cron: '0 12 * * *'  # 13:00 Lagos: afternoon reminder
-    - cron: '0 19 * * *'  # 20:00 Lagos: night watch warning
-
   workflow_dispatch:
     inputs:
       job:
