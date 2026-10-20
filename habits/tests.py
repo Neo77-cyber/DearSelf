@@ -1317,6 +1317,18 @@ class MaintenanceTriggerTests(TestCase):
     # --- key via header ---
 
     @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_key_via_url_accepted(self, mock_wa):
+        response = self.client.post(f"{self.url}?task=send_nudges&key=supersecretkey")
+        self.assertEqual(response.status_code, 200)
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_key_with_pasted_spaces_accepted(self, mock_wa):
+        response = self.client.post(
+            f"{self.url}?task=send_nudges", HTTP_X_MAINTENANCE_KEY=" supersecretkey "
+        )
+        self.assertEqual(response.status_code, 200)
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_key_via_header_accepted(self, mock_wa):
         response = self.client.post(
             f"{self.url}?task=send_nudges",

@@ -589,7 +589,14 @@ def banned_view(request):
 @csrf_exempt
 @require_POST
 def maintenance_trigger(request):
-    key = request.headers.get("X-Maintenance-Key") or request.POST.get("key")
+    # Header, form field or ?key= in the URL (for schedulers that can't set
+    # headers). Whitespace is stripped because keys get pasted with spaces.
+    key = (
+        request.headers.get("X-Maintenance-Key")
+        or request.POST.get("key")
+        or request.GET.get("key")
+        or ""
+    ).strip()
     if not key or not hmac.compare_digest(key, settings.MAINTENANCE_KEY):
         return JsonResponse({"error": "Unauthorized"}, status=401)
 
