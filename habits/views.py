@@ -28,7 +28,7 @@ from .services.clockin import user_for_clock_in
 from .services.flags import whatsapp_signups_open
 from .services.streaks import close_day
 from .services.helpers import clean_phone_number, parse_habit, banned_check
-from .services.notify import send_reminder, send_text
+from .services.notify import send_reminder, send_text, warning_lines
 from .services.otp import (
     OTP_EXPIRY_MINUTES,
     issue_otp,
@@ -226,8 +226,9 @@ def verify_otp_view(request):
         send_text(
             user,
             "Welcome to DearSelf. I'll remind you at 8am, and again at 9pm if "
-            "you haven't clocked in; tap the link to clock in. Miss 3 days in "
-            "a row and you are out. Be warned.",
+            "you haven't clocked in; tap the link to clock in. Miss a habit 3 "
+            "days in a row and you lose its streak. Lose every habit and you "
+            "are out. Be warned.",
         )
     except Exception as e:
         logger.warning("Welcome message failed for %s: %s", phone[:4], e)
@@ -677,6 +678,9 @@ def maintenance_trigger(request):
                     f"You haven't clocked in for {pending_names} today. "
                     "You have until 6am or it counts as a miss."
                 )
+                warnings = warning_lines(habits)
+                if warnings:
+                    note += f"\n\n{warnings}"
                 if send_reminder(user, "*DAILY CHECK-IN*", habits, note):
                     sent += 1
             except Exception as e:
@@ -686,19 +690,28 @@ def maintenance_trigger(request):
 
     if task == "close_day":
         result = close_day()
+        for habit in result["lost"]:
+            try:
+                send_text(
+                    habit.user,
+                    f"💀 You lost your {habit.name} streak: 3 days missed in a row. "
+                    "Clock in today to start it again. Lose every habit and you're out.",
+                )
+            except Exception as e:
+                logger.error("Lost notice failed for user %s: %s", habit.user.username, e)
         for user in result["banned"]:
             try:
                 send_text(
                     user,
-                    "*YOU'RE OUT*\n\nThat's 3 misses in a row. I warned you. "
-                    "Your DearSelf account is now closed.",
+                    "*YOU'RE OUT*\n\nEvery one of your habits is lost: 3 days missed "
+                    "in a row. I warned you. Your DearSelf account is now closed.",
                 )
             except Exception as e:
                 logger.error("Ban notice failed for user %s: %s", user.username, e)
 
         return HttpResponse(
             f"Closed {result['day']}. {result['misses']} misses recorded. "
-            f"{len(result['banned'])} banned."
+            f"{len(result['lost'])} streaks lost. {len(result['banned'])} banned."
         )
 
     if task == "whatsapp_status":

@@ -480,13 +480,15 @@ class HabitRecordMissTests(TestCase):
         result = self.habit.record_miss()
         self.assertEqual(result["status"], "missed")
 
-    def test_third_miss_bans_user(self):
+    def test_third_miss_loses_habit_but_does_not_ban_by_itself(self):
+        # Banning is close_day's call, once every habit is lost.
         self.habit.missed_count = 2
         self.habit.save()
         result = self.habit.record_miss()
-        self.assertEqual(result["status"], "banned")
+        self.assertEqual(result["status"], "lost")
+        self.assertTrue(self.habit.is_lost)
         self.user.refresh_from_db()
-        self.assertFalse(self.user.is_active)
+        self.assertTrue(self.user.is_active)
 
     def test_second_miss_does_not_ban(self):
         self.habit.missed_count = 1
@@ -1293,7 +1295,67 @@ class MaintenanceTriggerTests(TestCase):
         self._post("close_day")
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_active)
-        self.assertIn("3 misses", mock_wa.call_args[0][1])
+        self.assertIn("Every one of your habits is lost", mock_wa.call_args[0][1])
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_losing_one_of_two_habits_keeps_you_in(self, mock_wa):
+        self._age_habit()
+        other = make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
+        Habit.objects.filter(pk=other.pk).update(created_at=timezone.now() - timedelta(days=3))
+        Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
+        response = self._post("close_day")
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_active)
+        self.assertIn("1 streaks lost. 0 banned", response.content.decode())
+        self.assertIn(f"You lost your {self.habit.name} streak", mock_wa.call_args[0][1])
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_banned_only_when_every_habit_is_lost(self, mock_wa):
+        self._age_habit()
+        other = make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
+        Habit.objects.filter(pk=other.pk).update(
+            created_at=timezone.now() - timedelta(days=3), missed_count=2
+        )
+        Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
+        self._post("close_day")
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+        # One ban notice, not a "lost" notice per habit on top of it.
+        self.assertEqual(mock_wa.call_count, 1)
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_already_lost_habit_does_not_save_you_from_ban(self, mock_wa):
+        # Habit A was lost days ago; when B is lost too, you're out.
+        self._age_habit()
+        other = make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
+        Habit.objects.filter(pk=other.pk).update(
+            created_at=timezone.now() - timedelta(days=3), missed_count=5
+        )
+        Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
+        self._post("close_day")
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_night_message_warns_how_many_days_are_left(self, mock_wa):
+        Habit.objects.filter(pk=self.habit.pk).update(missed_count=1)
+        last_chance = make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
+        Habit.objects.filter(pk=last_chance.pk).update(missed_count=2)
+        self._post("night_watch")
+        message = mock_wa.call_args[0][1]
+        self.assertIn(f"⏳ {self.habit.name}: missed 1 day, 2 days left", message)
+        self.assertIn(f"⚠️ {self.habit.name}: 2 days left before you lose the streak.", message)
+        self.assertIn("⚠️ Alcohol Sober: miss today and the streak is lost.", message)
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_messages_show_fire_streaks(self, mock_wa):
+        Habit.objects.filter(pk=self.habit.pk).update(current_streak=5)
+        lost = make_habit(self.user, name="Gambling", category="GAMBLING")
+        Habit.objects.filter(pk=lost.pk).update(missed_count=3)
+        self._post("send_nudges")
+        message = mock_wa.call_args[0][1]
+        self.assertIn(f"🔥 {self.habit.name} 5", message)
+        self.assertIn("💀 Gambling: streak lost", message)
 
     @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_clocking_in_resets_misses(self, mock_wa):

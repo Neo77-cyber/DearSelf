@@ -7,11 +7,37 @@ from .whatsapp import send_whatsapp_message
 logger = logging.getLogger(__name__)
 
 
+def plural(n, word):
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def habit_line(h) -> str:
+    if h.marked_today:
+        return f"✅ {h.name} 🔥 {h.current_streak}"
+    if h.is_lost:
+        return f"💀 {h.name}: streak lost. Clock in to start again."
+    if h.missed_count:
+        return f"⏳ {h.name}: missed {plural(h.missed_count, 'day')}, {plural(h.days_left, 'day')} left"
+    if h.current_streak:
+        return f"🔥 {h.name} {h.current_streak}"
+    return f"🌱 {h.name}: day 1 starts today"
+
+
 def habit_lines(habits) -> str:
-    return "\n".join(
-        f"• {h.name}: {h.current_streak} day streak | {h.missed_count}/3 misses"
-        for h in habits
-    )
+    return "\n".join(habit_line(h) for h in habits)
+
+
+def warning_lines(habits) -> str:
+    """For the 9pm message: how close each unfinished habit is to being lost."""
+    lines = []
+    for h in habits:
+        if h.marked_today or h.is_lost or not h.missed_count:
+            continue
+        if h.days_left == 1:
+            lines.append(f"⚠️ {h.name}: miss today and the streak is lost.")
+        else:
+            lines.append(f"⚠️ {h.name}: {plural(h.days_left, 'day')} left before you lose the streak.")
+    return "\n".join(lines)
 
 
 def done_buttons(habits):

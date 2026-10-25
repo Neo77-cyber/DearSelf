@@ -149,21 +149,25 @@ class Habit(models.Model):
             "longest_streak": self.longest_streak,
         }
 
+    MISSES_TO_LOSE = 3
+
+    @property
+    def is_lost(self) -> bool:
+        """3 misses in a row loses the streak. Clocking in starts it again."""
+        return self.missed_count >= self.MISSES_TO_LOSE
+
+    @property
+    def days_left(self) -> int:
+        return max(self.MISSES_TO_LOSE - self.missed_count, 0)
+
     def record_miss(self) -> dict:
+        # Losing one habit doesn't ban anyone: close_day bans a user only
+        # once every one of their habits is lost.
         self.missed_count += 1
         self.current_streak = 0
-
-        banned = False
-        if self.missed_count >= 3:
-            user = self.user
-            user.is_active = False
-            user.save(update_fields=["is_active"])
-            banned = True
-
         self.save(update_fields=["missed_count", "current_streak"])
-
         return {
-            "status": "banned" if banned else "missed",
+            "status": "lost" if self.missed_count == self.MISSES_TO_LOSE else "missed",
             "missed_count": self.missed_count,
         }
 

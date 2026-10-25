@@ -42,7 +42,7 @@
                     <div class="glass-card p-5 flex items-center justify-between gap-4 text-left">
                         <div>
                             <p class="font-bold">{{ habit.name }}</p>
-                            <p class="text-xs text-gray-500 mt-1">{{ habit.current_streak }} day streak · {{ habit.missed_count }}/3 misses</p>
+                            <p class="text-xs text-gray-500 mt-1">{% if habit.is_lost %}💀 Streak lost. Clock in to start again.{% elif habit.missed_count %}⏳ {{ habit.days_left }} day{{ habit.days_left|pluralize }} left{% else %}🔥 {{ habit.current_streak }}{% endif %}</p>
                         </div>
                         {% if habit.marked_today %}
                             <span class="text-[10px] font-extrabold uppercase tracking-widest text-violet-400">Clocked in</span>

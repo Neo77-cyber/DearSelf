@@ -32,7 +32,7 @@ def close_day(day: datetime.date = None) -> dict:
         .select_related("user__profile")
     )
 
-    misses, newly_banned = 0, {}
+    misses, lost, missed_users = 0, [], {}
     for habit in habits:
         _, created = DailyRecord.objects.get_or_create(
             habit=habit, date=day, defaults={"completed": False}
@@ -40,8 +40,24 @@ def close_day(day: datetime.date = None) -> dict:
         if not created:
             continue
         misses += 1
-        if habit.record_miss()["status"] == "banned":
-            newly_banned[habit.user_id] = habit.user
-            logger.warning("User %s banned after 3 misses.", habit.user.username)
+        missed_users[habit.user_id] = habit.user
+        if habit.record_miss()["status"] == "lost":
+            lost.append(habit)
 
-    return {"day": day, "misses": misses, "banned": list(newly_banned.values())}
+    # You're out only when every habit you have is lost.
+    banned = []
+    for user in missed_users.values():
+        if not Habit.objects.filter(user=user, missed_count__lt=Habit.MISSES_TO_LOSE).exists():
+            user.is_active = False
+            user.save(update_fields=["is_active"])
+            banned.append(user)
+            logger.warning("User %s banned: every habit lost.", user.username)
+
+    banned_ids = {u.id for u in banned}
+    return {
+        "day": day,
+        "misses": misses,
+        # A habit lost on the day its owner is banned gets the ban notice instead.
+        "lost": [h for h in lost if h.user_id not in banned_ids],
+        "banned": banned,
+    }

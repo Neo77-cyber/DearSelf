@@ -18,10 +18,10 @@ PICKABLE_HABITS = {
 
 WELCOME = (
     "Welcome to DearSelf. I'll remind you at 8am, and again at 9pm if you "
-    "haven't clocked in; tap ✅ to clock in. Miss 3 days in a row and you're "
-    "out. Be warned."
+    "haven't clocked in; tap ✅ to clock in. Miss a habit 3 days in a row and "
+    "you lose its streak. Lose every habit and you're out. Be warned."
 )
-OUT = "You missed 3 days in a row, so you're out. DearSelf is closed for you."
+OUT = "Every one of your habits is lost, so you're out. DearSelf is closed for you."
 HELP = (
     "/done — clock in everything for today\n"
     "/status — your streaks\n"
