@@ -49,17 +49,14 @@ def close_day(day: datetime.date = None) -> dict:
         if habit.record_miss()["status"] == "lost":
             lost.append(habit)
 
-    # You're out once you've lost 3 habits.
+    # You're out once every habit you have is lost, whether that's 1, 2 or 3.
     banned = []
     for user in missed_users.values():
-        lost_count = Habit.objects.filter(
-            user=user, missed_count__gte=Habit.MISSES_TO_LOSE
-        ).count()
-        if lost_count >= Habit.LOST_HABITS_TO_BAN:
+        if not Habit.objects.filter(user=user, missed_count__lt=Habit.MISSES_TO_LOSE).exists():
             user.is_active = False
             user.save(update_fields=["is_active"])
             banned.append(user)
-            logger.warning("User %s banned: %s habits lost.", user.username, lost_count)
+            logger.warning("User %s banned: all habits lost.", user.username)
 
     banned_ids = {u.id for u in banned}
     return {

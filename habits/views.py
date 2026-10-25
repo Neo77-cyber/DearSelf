@@ -227,8 +227,8 @@ def verify_otp_view(request):
             user,
             "Welcome to DearSelf. I'll remind you at 8am, and again at 9pm if "
             "you haven't clocked in; tap the link to clock in. Miss a habit 3 "
-            "days in a row and that habit is gone for good. Lose 3 habits and "
-            "you are out. Be warned.",
+            "days in a row and that habit is gone for good. Lose all your "
+            "habits and you are out. Be warned.",
         )
     except Exception as e:
         logger.warning("Welcome message failed for %s: %s", phone[:4], e)
@@ -698,7 +698,7 @@ def maintenance_trigger(request):
                 send_text(
                     habit.user,
                     f"💀 You lost your {habit.name} streak: 3 days missed in a row. "
-                    "That habit is done for good. Lose 3 habits and you're out.",
+                    "That habit is done for good. Lose all your habits and you're out.",
                 )
             except Exception as e:
                 logger.error("Lost notice failed for user %s: %s", habit.user.username, e)
@@ -706,7 +706,7 @@ def maintenance_trigger(request):
             try:
                 send_text(
                     user,
-                    "*YOU'RE OUT*\n\nYou've lost 3 habits. I warned you. "
+                    "*YOU'RE OUT*\n\nYou've lost all your habits. I warned you. "
                     "Your DearSelf account is now closed.",
                 )
             except Exception as e:

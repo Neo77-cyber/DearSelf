@@ -1290,6 +1290,7 @@ class MaintenanceTriggerTests(TestCase):
 
     @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_losing_one_of_two_habits_keeps_you_in(self, mock_wa):
+        # Alcohol Sober is still alive, so losing the other habit isn't a ban.
         self._age_habit()
         other = make_habit(self.user, name="Alcohol Sober", category="ALCOHOL SOBER")
         Habit.objects.filter(pk=other.pk).update(created_at=timezone.now() - timedelta(days=3))
@@ -1308,7 +1309,7 @@ class MaintenanceTriggerTests(TestCase):
         return habit
 
     @patch("habits.services.notify.send_whatsapp_message", return_value=True)
-    def test_third_lost_habit_bans_and_notifies(self, mock_wa):
+    def test_losing_your_last_habit_of_three_bans_and_notifies(self, mock_wa):
         self._age_habit()
         self._lost_habit("Lost one")
         self._lost_habit("Lost two")
@@ -1316,18 +1317,27 @@ class MaintenanceTriggerTests(TestCase):
         self._post("close_day")
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_active)
-        self.assertIn("You've lost 3 habits", mock_wa.call_args[0][1])
+        self.assertIn("You've lost all your habits", mock_wa.call_args[0][1])
         # One ban notice, not a "lost" notice on top of it.
         self.assertEqual(mock_wa.call_count, 1)
 
     @patch("habits.services.notify.send_whatsapp_message", return_value=True)
-    def test_two_lost_habits_is_not_a_ban(self, mock_wa):
+    def test_losing_one_habit_while_another_is_alive_is_not_a_ban(self, mock_wa):
         self._age_habit()
         self._lost_habit("Lost one")
-        Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
         self._post("close_day")
         self.user.refresh_from_db()
         self.assertTrue(self.user.is_active)
+        self.habit.refresh_from_db()
+        self.assertEqual(self.habit.missed_count, 1)
+
+    @patch("habits.services.notify.send_whatsapp_message", return_value=True)
+    def test_single_habit_user_is_banned_when_it_is_lost(self, mock_wa):
+        self._age_habit()
+        Habit.objects.filter(pk=self.habit.pk).update(missed_count=2)
+        self._post("close_day")
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
 
     @patch("habits.services.notify.send_whatsapp_message", return_value=True)
     def test_lost_habit_collects_no_more_misses(self, mock_wa):

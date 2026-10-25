@@ -153,7 +153,6 @@ class Habit(models.Model):
         }
 
     MISSES_TO_LOSE = 3
-    LOST_HABITS_TO_BAN = 3
 
     @property
     def is_lost(self) -> bool:
@@ -166,7 +165,7 @@ class Habit(models.Model):
 
     def record_miss(self) -> dict:
         # Losing a habit doesn't ban anyone by itself: close_day bans a user
-        # once they've lost LOST_HABITS_TO_BAN habits.
+        # once every habit they have is lost.
         self.missed_count += 1
         self.current_streak = 0
         self.save(update_fields=["missed_count", "current_streak"])
