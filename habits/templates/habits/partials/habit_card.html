@@ -20,12 +20,14 @@
             {% if habit.missed_count >= 2 %}text-red-500
             {% elif habit.missed_count == 1 %}text-yellow-500
             {% else %}text-gray-600{% endif %}">
-            {{ habit.missed_count }}/3 misses
+            {% if habit.is_lost %}Streak lost{% else %}{{ habit.missed_count }}/3 misses{% endif %}
         </p>
     </div>
 
     <div class="flex items-center shrink-0">
-        {% if not habit.marked_today %}
+        {% if habit.is_lost %}
+        <span class="text-[10px] font-extrabold uppercase tracking-widest text-gray-600">💀 Lost</span>
+        {% elif not habit.marked_today %}
         <button
             class="clock-in-btn text-[11px] font-extrabold uppercase tracking-widest
                    bg-violet-600 hover:bg-violet-700 px-5 py-3 rounded-xl

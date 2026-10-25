@@ -227,8 +227,8 @@ def verify_otp_view(request):
             user,
             "Welcome to DearSelf. I'll remind you at 8am, and again at 9pm if "
             "you haven't clocked in; tap the link to clock in. Miss a habit 3 "
-            "days in a row and you lose its streak. Lose every habit and you "
-            "are out. Be warned.",
+            "days in a row and that habit is gone for good. Lose 3 habits and "
+            "you are out. Be warned.",
         )
     except Exception as e:
         logger.warning("Welcome message failed for %s: %s", phone[:4], e)
@@ -447,7 +447,7 @@ def habit_list(request):
     )
 
     total_streak = sum(h.current_streak for h in habits)
-    max_misses = max((h.missed_count for h in habits), default=0)
+    max_misses = max((h.missed_count for h in habits if not h.is_lost), default=0)
     days_left = max(3 - max_misses, 0)
 
     return render(
@@ -558,6 +558,8 @@ def clock_in(request, token):
         habit = Habit.objects.filter(id=request.POST.get("habit_id"), user=user).first()
         if habit is None:
             messages.error(request, "That habit wasn't found.")
+        elif habit.is_lost:
+            messages.error(request, f"Your {habit.name} streak is lost. That habit is done.")
         else:
             result = habit.mark_done()
             messages.success(
@@ -566,9 +568,10 @@ def clock_in(request, token):
         return redirect("clock_in", token=token)
 
     habits = list(Habit.objects.filter(user=user).order_by("id"))
-    if all(h.is_quit_habit for h in habits):
+    live = [h for h in habits if not h.is_lost]
+    if all(h.is_quit_habit for h in live):
         question = "Stayed off it today?"
-    elif all(not h.is_quit_habit and not h.is_custom_habit for h in habits):
+    elif all(not h.is_quit_habit and not h.is_custom_habit for h in live):
         question = "Did it today?"
     else:
         question = "How did today go?"
@@ -577,7 +580,7 @@ def clock_in(request, token):
         "habits/clock_in.html",
         {
             "habits": habits,
-            "all_done": all(h.marked_today for h in habits),
+            "all_done": all(h.marked_today for h in live),
             "question": question,
         },
     )
@@ -645,8 +648,8 @@ def maintenance_trigger(request):
         user_habits = active_habits_by_user()
         sent = skipped = 0
         for user, habits in user_habits.items():
-            if all(h.marked_today for h in habits):
-                # Already done for today: don't spend a message on them.
+            if all(h.marked_today or h.is_lost for h in habits):
+                # Done for today (or nothing left to do): don't spend a message.
                 skipped += 1
                 continue
             try:
@@ -665,9 +668,9 @@ def maintenance_trigger(request):
         user_habits = active_habits_by_user()
         sent = 0
         for user, habits in user_habits.items():
-            if all(h.marked_today for h in habits):
+            if all(h.marked_today or h.is_lost for h in habits):
                 continue
-            pending = [h.name for h in habits if not h.marked_today]
+            pending = [h.name for h in habits if not h.marked_today and not h.is_lost]
             if len(pending) > 1:
                 pending_names = ", ".join(pending[:-1]) + " and " + pending[-1]
             else:
@@ -695,7 +698,7 @@ def maintenance_trigger(request):
                 send_text(
                     habit.user,
                     f"💀 You lost your {habit.name} streak: 3 days missed in a row. "
-                    "Clock in today to start it again. Lose every habit and you're out.",
+                    "That habit is done for good. Lose 3 habits and you're out.",
                 )
             except Exception as e:
                 logger.error("Lost notice failed for user %s: %s", habit.user.username, e)
@@ -703,8 +706,8 @@ def maintenance_trigger(request):
             try:
                 send_text(
                     user,
-                    "*YOU'RE OUT*\n\nEvery one of your habits is lost: 3 days missed "
-                    "in a row. I warned you. Your DearSelf account is now closed.",
+                    "*YOU'RE OUT*\n\nYou've lost 3 habits. I warned you. "
+                    "Your DearSelf account is now closed.",
                 )
             except Exception as e:
                 logger.error("Ban notice failed for user %s: %s", user.username, e)

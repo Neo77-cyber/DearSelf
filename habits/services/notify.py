@@ -12,15 +12,11 @@ def plural(n, word):
 
 
 def habit_line(h) -> str:
-    if h.marked_today:
-        return f"✅ {h.name} 🔥 {h.current_streak}"
     if h.is_lost:
-        return f"💀 {h.name}: streak lost. Clock in to start again."
-    if h.missed_count:
+        return f"💀 {h.name}: streak lost"
+    if h.missed_count and not h.marked_today:
         return f"⏳ {h.name}: missed {plural(h.missed_count, 'day')}, {plural(h.days_left, 'day')} left"
-    if h.current_streak:
-        return f"🔥 {h.name} {h.current_streak}"
-    return f"🌱 {h.name}: day 1 starts today"
+    return f"🔥 {h.name} {h.current_streak}"
 
 
 def habit_lines(habits) -> str:
@@ -34,9 +30,9 @@ def warning_lines(habits) -> str:
         if h.marked_today or h.is_lost or not h.missed_count:
             continue
         if h.days_left == 1:
-            lines.append(f"⚠️ {h.name}: miss today and the streak is lost.")
+            lines.append(f"{h.name}: miss today and the streak is lost.")
         else:
-            lines.append(f"⚠️ {h.name}: {plural(h.days_left, 'day')} left before you lose the streak.")
+            lines.append(f"{h.name}: {plural(h.days_left, 'day')} left before you lose the streak.")
     return "\n".join(lines)
 
 
@@ -46,7 +42,11 @@ def done_buttons(habits):
             return f"✅ Passed: {h.name}"
         return f"✅ Stayed off: {h.name}" if h.is_quit_habit else f"✅ Did it: {h.name}"
 
-    return [[(label(h), f"done:{h.id}")] for h in habits if not h.marked_today]
+    return [
+        [(label(h), f"done:{h.id}")]
+        for h in habits
+        if not h.marked_today and not h.is_lost
+    ]
 
 
 def send_text(user, text: str) -> bool:

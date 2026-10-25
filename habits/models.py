@@ -110,6 +110,9 @@ class Habit(models.Model):
         return self.last_marked_date < yesterday
 
     def mark_done(self) -> dict:
+        if self.is_lost:
+            return {"status": "lost", "current_streak": 0}
+
         today = get_logical_date()
 
         if self.last_marked_date == today:
@@ -150,10 +153,11 @@ class Habit(models.Model):
         }
 
     MISSES_TO_LOSE = 3
+    LOST_HABITS_TO_BAN = 3
 
     @property
     def is_lost(self) -> bool:
-        """3 misses in a row loses the streak. Clocking in starts it again."""
+        """3 misses in a row loses the habit for good: no more clocking in."""
         return self.missed_count >= self.MISSES_TO_LOSE
 
     @property
@@ -161,8 +165,8 @@ class Habit(models.Model):
         return max(self.MISSES_TO_LOSE - self.missed_count, 0)
 
     def record_miss(self) -> dict:
-        # Losing one habit doesn't ban anyone: close_day bans a user only
-        # once every one of their habits is lost.
+        # Losing a habit doesn't ban anyone by itself: close_day bans a user
+        # once they've lost LOST_HABITS_TO_BAN habits.
         self.missed_count += 1
         self.current_streak = 0
         self.save(update_fields=["missed_count", "current_streak"])

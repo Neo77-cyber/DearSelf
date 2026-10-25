@@ -19,9 +19,9 @@ PICKABLE_HABITS = {
 WELCOME = (
     "Welcome to DearSelf. I'll remind you at 8am, and again at 9pm if you "
     "haven't clocked in; tap ✅ to clock in. Miss a habit 3 days in a row and "
-    "you lose its streak. Lose every habit and you're out. Be warned."
+    "that habit is gone for good. Lose 3 habits and you're out. Be warned."
 )
-OUT = "Every one of your habits is lost, so you're out. DearSelf is closed for you."
+OUT = "You've lost 3 habits, so you're out. DearSelf is closed for you."
 HELP = (
     "/done — clock in everything for today\n"
     "/status — your streaks\n"
@@ -104,7 +104,8 @@ def sign_up(chat_id, slug):
 def send_status(chat_id, user, intro=""):
     habits = list(Habit.objects.filter(user=user).order_by("id"))
     text = f"{intro}\n\n{habit_lines(habits)}".strip()
-    if habits and all(h.marked_today for h in habits):
+    live = [h for h in habits if not h.is_lost]
+    if live and all(h.marked_today for h in live):
         text += "\n\nAll done today. 🔥"
     send_message(chat_id, text, done_buttons(habits))
 
@@ -112,7 +113,7 @@ def send_status(chat_id, user, intro=""):
 def clock_in_all(chat_id, user):
     lines = []
     for habit in Habit.objects.filter(user=user).order_by("id"):
-        if not habit.marked_today:
+        if not habit.marked_today and not habit.is_lost:
             result = habit.mark_done()
             lines.append(f"🔥 {habit.name}: {result['current_streak']} day streak")
     send_message(chat_id, "\n".join(lines) or "You already clocked in today. 🔥")
@@ -144,7 +145,9 @@ def handle_button(callback):
         habit = Habit.objects.filter(id=value, user=user).first() if value.isdigit() else None
         if habit is None:
             return answer_callback(callback["id"], "That habit wasn't found.")
-        if habit.marked_today:
+        if habit.is_lost:
+            answer_callback(callback["id"], "That streak is lost. The habit is done.")
+        elif habit.marked_today:
             answer_callback(callback["id"], "Already clocked in today.")
         else:
             result = habit.mark_done()

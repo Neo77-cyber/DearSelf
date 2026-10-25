@@ -42,9 +42,11 @@
                     <div class="glass-card p-5 flex items-center justify-between gap-4 text-left">
                         <div>
                             <p class="font-bold">{{ habit.name }}</p>
-                            <p class="text-xs text-gray-500 mt-1">{% if habit.is_lost %}💀 Streak lost. Clock in to start again.{% elif habit.missed_count %}⏳ {{ habit.days_left }} day{{ habit.days_left|pluralize }} left{% else %}🔥 {{ habit.current_streak }}{% endif %}</p>
+                            <p class="text-xs text-gray-500 mt-1">{% if habit.is_lost %}💀 Streak lost{% elif habit.missed_count and not habit.marked_today %}⏳ {{ habit.days_left }} day{{ habit.days_left|pluralize }} left{% else %}🔥 {{ habit.current_streak }}{% endif %}</p>
                         </div>
-                        {% if habit.marked_today %}
+                        {% if habit.is_lost %}
+                            <span class="text-[10px] font-extrabold uppercase tracking-widest text-gray-600">Lost</span>
+                        {% elif habit.marked_today %}
                             <span class="text-[10px] font-extrabold uppercase tracking-widest text-violet-400">Clocked in</span>
                         {% else %}
                             <form method="post" class="clock-in-form">
